@@ -1,24 +1,25 @@
 {
   "config": {
-    "input": 1808,
+    "input": 1809,
     "hidden": [
       256,
       256
     ],
-    "actions": 252
+    "actions": 272,
+    "pointers": true
   },
   "kind": "ppo",
-  "iter": 20,
+  "iter": 50,
   "eval": {
-    "games": 600,
-    "wins": 79,
-    "vp": 3831,
-    "turns": 41801,
+    "games": 800,
+    "wins": 212,
+    "vp": 6139,
+    "turns": 55348,
     "capped": 0,
-    "winRate": 0.13166666666666665,
-    "ci": 0.027055876201613524,
-    "avgVp": 6.385,
-    "avgTurns": 69.66833333333334
+    "winRate": 0.265,
+    "ci": 0.030582830967717817,
+    "avgVp": 7.67375,
+    "avgTurns": 69.185
   },
   "hp": {
     "hidden": [
