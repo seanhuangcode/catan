@@ -69,7 +69,16 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       this.game = game;
       this.controller = controller;
       this.human = human;
-      game.on(() => this.render());
+      this.mode = null;
+      this.dialog = null;
+      this.drawDialog();
+      this.logRendered = 0;
+      this.$('log').innerHTML = '';
+      this.seenRoll = 0;
+      this.rollTime = 0;
+      this.freshSeq = -1;
+      this.gameOverShown = false;
+      game.on(g => { if (g === this.game) this.render(); });
       this.render();
     }
 
@@ -830,7 +839,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
           <table class="results"><thead><tr><th>Player</th><th>Settlements</th><th>Cities</th><th>Bonuses</th><th>VP</th></tr></thead><tbody>${rows}</tbody></table>
           <h4>Dice rolls</h4><div class="dice-chart">${bars}</div>
           <div class="modal-actions"><button class="btn" data-act="close">View board</button><button class="btn primary" data-act="again">New game</button></div>`,
-        on: { again: () => location.reload() },
+        on: { again: () => C.newGame() },
       });
     }
   }

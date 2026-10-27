@@ -70,7 +70,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     const human = seats.findIndex(s => !s.isBot);
 
     const game = new C.Game({ players: seats, vpToWin: opts.vp, friendlyRobber: opts.friendly });
-    const ui = new C.UI();
+    const ui = C.ui || (C.ui = new C.UI());
     const controller = new C.Controller(game, ui, { delay: SPEEDS[opts.speed] || SPEEDS.normal });
 
     document.getElementById('start-screen').classList.add('hidden');
@@ -79,6 +79,15 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     controller.schedule();
     C.current = { game, ui, controller };
   }
+
+  // Ends the current game and returns to the start screen.
+  C.newGame = function () {
+    if (C.current) C.current.controller.stop();
+    C.current = null;
+    if (C.ui) C.ui.closeDialog();
+    document.getElementById('game').classList.add('hidden');
+    document.getElementById('start-screen').classList.remove('hidden');
+  };
 
   document.addEventListener('DOMContentLoaded', init);
 })(Catan);
