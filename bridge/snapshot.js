@@ -35,7 +35,9 @@
  *   ports                  [{type ('any' or a resource), vertices: [vertex, vertex]}]
  *   buildings              [{owner, type ('settlement'|'city'), vertex}]
  *   roads                  [{owner, edge}]
- *   players                [{name, handCount, devCount, knightsPlayed}] in seat order
+ *   players                [{name, handCount, devCount, knightsPlayed, publicHand?}] in seat order;
+ *                          publicHand (optional) is the expected resource breakdown of that
+ *                          player's hand from public events, i.e. card counting
  *   hand                   my resource cards {wood, brick, sheep, wheat, ore}
  *   devCards               my development cards [{type, playable}] (playable = bought before this turn)
  *   bank                   resource cards left in the bank (optional; estimated if missing)
@@ -109,7 +111,13 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       ports: game.ports.map(pt => ({ type: pt.type, vertices: pt.vertices.map(v => vertexRef(game, v)) })),
       buildings: game.vertices.filter(v => v.building).map(v => ({ owner: v.building.player, type: v.building.type, vertex: vertexRef(game, v.id) })),
       roads: game.edges.filter(e => e.road !== null).map(e => ({ owner: e.road, edge: edgeRef(game, e.id) })),
-      players: game.players.map(o => ({ name: o.name, handCount: C.handTotal(o.hand), devCount: o.devCards.length, knightsPlayed: o.knightsPlayed })),
+      players: game.players.map(o => ({
+        name: o.name,
+        handCount: C.handTotal(o.hand),
+        devCount: o.devCards.length,
+        knightsPlayed: o.knightsPlayed,
+        publicHand: game.publicHands ? Object.assign({}, game.publicHands[o.id]) : undefined,
+      })),
       hand: Object.assign({}, p.hand),
       devCards: p.devCards.map(c => ({ type: c.type, playable: c.turnBought < game.turn })),
       bank: Object.assign({}, game.bank),
@@ -185,11 +193,18 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         pl.hand = Object.assign(C.emptyHand(), snap.hand);
         pl.devCards = (snap.devCards || []).map(c => ({ type: c.type, turnBought: c.playable ? snap.turn - 1 : snap.turn }));
       } else {
-        pl.hand = C.emptyHand();
-        for (let k = 0; k < (info.handCount || 0); k++) pl.hand[R[k % 5]]++;
+        pl.hand = C.placeholderHand(info.handCount || 0, info.publicHand);
         pl.devCards = [];
         for (let k = 0; k < (info.devCount || 0); k++) pl.devCards.push({ type: 'knight', turnBought: -1 });
       }
+    });
+
+    game.publicHands = snap.players.map((info, i) => {
+      if (info.publicHand) return Object.assign(C.emptyHand(), info.publicHand);
+      if (i === snap.me) return Object.assign(C.emptyHand(), snap.hand);
+      const h = C.emptyHand();
+      for (const r of R) h[r] = (info.handCount || 0) / 5;
+      return h;
     });
 
     if (snap.bank) game.bank = Object.assign(C.emptyHand(), snap.bank);

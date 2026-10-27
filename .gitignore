@@ -15,3 +15,5 @@ rl/checkpoints/*.json
 !rl/checkpoints/ppo.json
 !rl/checkpoints/ppo2.bin
 !rl/checkpoints/ppo2.json
+!rl/checkpoints/ppo3.bin
+!rl/checkpoints/ppo3.json

@@ -68,7 +68,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   const O_EDGE = O_VERTEX + N_VERTEX * VERTEX_F;
   const O_PLAYER = O_EDGE + N_EDGE * EDGE_F;
   const O_SELF = O_PLAYER + MAX_SEATS * PLAYER_F;
-  const OBS_SIZE = O_SELF + SELF_F;
+  // Appended later: each opponent's publicly known hand (see Game#publicHands).
+  // Kept last so models trained before it still read the same inputs.
+  const PUBLIC_F = 5;
+  const O_PUBLIC = O_SELF + SELF_F;
+  const OBS_SIZE = O_PUBLIC + (MAX_SEATS - 1) * PUBLIC_F;
 
   /**
    * Extra per-decision context the engine doesn't track:
@@ -221,6 +225,14 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     out[o++] = game.dice ? (game.dice[0] + game.dice[1]) / 12 : 0;
     out[o++] = game.vpToWin / 10;
     out[o++] = ctx ? Math.min(ctx.offers || 0, MAX_OFFERS) / MAX_OFFERS : 0;
+
+    if (game.publicHands) {
+      for (const pl of game.players) {
+        if (pl.id === me) continue;
+        const base = O_PUBLIC + (rel(game, me, pl.id) - 1) * PUBLIC_F;
+        for (let i = 0; i < 5; i++) out[base + i] = game.publicHands[pl.id][R[i]] / 5;
+      }
+    }
     return out;
   }
 

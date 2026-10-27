@@ -52,6 +52,9 @@ function checkInvariants(g) {
     for (const p of g.players) assert(p.hand[r] >= 0, 'hand non-negative');
   }
   for (const p of g.players) {
+    const pub = g.publicHands[p.id];
+    assert(R.every(r => pub[r] >= 0), 'public hand estimate is non-negative');
+    assert(Math.abs(R.reduce((s, r) => s + pub[r], 0) - C.handTotal(p.hand)) < 1e-6, 'public hand estimate matches the card count');
     const roads = g.edges.filter(e => e.road === p.id).length;
     const settlements = g.vertices.filter(v => v.building && v.building.player === p.id && v.building.type === 'settlement').length;
     const cities = g.vertices.filter(v => v.building && v.building.player === p.id && v.building.type === 'city').length;

@@ -31,6 +31,25 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   C.handTotal = h => R.reduce((s, r) => s + ((h && h[r]) || 0), 0);
   C.hasResources = (hand, cost) => R.every(r => (hand[r] || 0) >= ((cost && cost[r]) || 0));
 
+  /**
+   * A stand-in hand of `n` cards for a player whose cards we can't see,
+   * shaped like the public estimate `pub` when there is one.
+   */
+  C.placeholderHand = (n, pub) => {
+    const h = C.emptyHand();
+    const sum = pub ? R.reduce((s, r) => s + pub[r], 0) : 0;
+    if (!(sum > 0)) {
+      for (let k = 0; k < n; k++) h[R[k % 5]]++;
+      return h;
+    }
+    const exact = R.map(r => (pub[r] / sum) * n);
+    let given = 0;
+    R.forEach((r, i) => { h[r] = Math.floor(exact[i]); given += h[r]; });
+    const order = R.map((r, i) => i).sort((a, b) => (exact[b] - Math.floor(exact[b])) - (exact[a] - Math.floor(exact[a])));
+    for (let k = 0; given < n; k++, given++) h[R[order[k % 5]]]++;
+    return h;
+  };
+
   function need(cond, msg) {
     if (!cond) throw new Error(msg);
   }
@@ -85,6 +104,10 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         roadLength: 0,
       }));
       this.bank = { wood: 19, brick: 19, sheep: 19, wheat: 19, ore: 19 };
+      // What the table can work out about each hand: expected count of each
+      // resource, from public events only (production, building, trades,
+      // discards, development cards). Steals are tracked in expectation.
+      this.publicHands = this.players.map(() => C.emptyHand());
       this.devDeck = C.shuffle(DEV_POOL.slice(), this.rng);
 
       const n = this.players.length;
@@ -406,7 +429,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         total += o.hand[resource];
         p.hand[resource] += o.hand[resource];
         o.hand[resource] = 0;
+        this.publicHands[o.id][resource] = 0;
+        this.fixPublic(o.id);
       }
+      this.publicHands[pid][resource] += total;
+      this.fixPublic(pid);
       this.addLog([{ p: pid }, ` took ${total} `, { r: resource, n: 1, plain: true }, ' from everyone']);
     }
 
@@ -446,7 +473,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       for (const r of R) {
         p.hand[r] += w[r] - g[r];
         o.hand[r] += g[r] - w[r];
+        this.publicHands[pid][r] += w[r] - g[r];
+        this.publicHands[to][r] += g[r] - w[r];
       }
+      this.fixPublic(pid);
+      this.fixPublic(to);
       this.addLog([{ p: pid }, ' gave ', ...cards(g), ' and got ', ...cards(w), ' from ', { p: to }]);
     }
 
@@ -468,7 +499,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         const c = cost[r] || 0;
         p.hand[r] -= c;
         this.bank[r] += c;
+        this.publicHands[pid][r] -= c;
       }
+      this.fixPublic(pid);
     }
 
     giveFromBank(pid, h) {
@@ -477,7 +510,25 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         const c = h[r] || 0;
         p.hand[r] += c;
         this.bank[r] -= c;
+        this.publicHands[pid][r] += c;
       }
+      this.fixPublic(pid);
+    }
+
+    /**
+     * Keeps a public hand estimate consistent with the real card count:
+     * no negative entries, and entries summing to the number of cards held.
+     */
+    fixPublic(pid) {
+      const pub = this.publicHands[pid];
+      const total = C.handTotal(this.players[pid].hand);
+      let sum = 0;
+      for (const r of R) {
+        if (pub[r] < 0) pub[r] = 0;
+        sum += pub[r];
+      }
+      if (Math.abs(sum - total) < 1e-9) return;
+      for (const r of R) pub[r] = sum > 0 ? (pub[r] * total) / sum : total / 5;
     }
 
     produce(sum) {
@@ -549,8 +600,18 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       for (const r of R) for (let i = 0; i < vh[r]; i++) pool.push(r);
       if (!pool.length) return;
       const r = pool[Math.floor(this.rng() * pool.length)];
+      // Everyone else only knows that one card moved: shift the expectation.
+      const vp = this.publicHands[victim];
+      const before = C.handTotal(vp);
+      for (const x of R) {
+        const share = before > 0 ? vp[x] / before : 0.2;
+        vp[x] -= share;
+        this.publicHands[thief][x] += share;
+      }
       vh[r]--;
       this.players[thief].hand[r]++;
+      this.fixPublic(victim);
+      this.fixPublic(thief);
       this.addLog(
         [{ p: thief }, ' stole a card from ', { p: victim }],
         { to: [thief, victim], parts: [{ p: thief }, ' stole ', { r, n: 1 }, ' from ', { p: victim }] }

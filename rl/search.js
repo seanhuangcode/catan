@@ -55,7 +55,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     winEstimate(g, me, ctx) {
       if (g.phase === 'gameOver') return g.winner === me ? 1 : 0;
       RL.encode(g, me, ctx, this.scratch);
-      const sp = RL.sparsify(this.scratch);
+      const sp = RL.sparsify(this.scratch.subarray(0, this.net.config.input));
       this.net.forward(sp.idx, sp.val);
       return this.net.value + this.shaping * g.victoryPoints(me, true) / 10;
     }

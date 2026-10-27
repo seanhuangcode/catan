@@ -32,7 +32,8 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     choose(game, me, ctx) {
       RL.encode(game, me, ctx, this.obs);
       RL.legalMask(game, me, ctx, this.mask);
-      const sp = RL.sparsify(this.obs);
+      // Older models were trained on fewer (leading) inputs; give them only those.
+      const sp = RL.sparsify(this.net.config.input < this.obs.length ? this.obs.subarray(0, this.net.config.input) : this.obs);
       this.net.forward(sp.idx, sp.val);
       const lse = RL.maskedSoftmax(this.net.logits, this.mask, this.probs);
       let a = -1;

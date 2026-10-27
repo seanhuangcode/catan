@@ -30,14 +30,13 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     c.players = game.players.map(p => {
       const q = Object.assign({}, p, { hand: Object.assign({}, p.hand), devCards: p.devCards.map(d => Object.assign({}, d)) });
       if (p.id !== me) {
-        const n = C.handTotal(p.hand);
-        q.hand = C.emptyHand();
-        for (let k = 0; k < n; k++) q.hand[R[k % 5]]++;
+        q.hand = C.placeholderHand(C.handTotal(p.hand), game.publicHands && game.publicHands[p.id]);
         q.devCards = p.devCards.map(() => ({ type: 'knight', turnBought: -1 }));
       }
       return q;
     });
     c.bank = Object.assign({}, game.bank);
+    c.publicHands = (game.publicHands || game.players.map(() => C.emptyHand())).map(h => Object.assign({}, h));
     c.devDeck = C.shuffle(game.devDeck.slice(), rng);
     c.discardPending = Object.assign({}, game.discardPending);
     c.stealCandidates = game.stealCandidates.slice();
@@ -55,6 +54,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     c.edges = g.edges.map(e => Object.assign({}, e));
     c.players = g.players.map(p => Object.assign({}, p, { hand: Object.assign({}, p.hand), devCards: p.devCards.slice() }));
     c.bank = Object.assign({}, g.bank);
+    c.publicHands = g.publicHands.map(h => Object.assign({}, h));
     c.devDeck = g.devDeck.slice();
     c.discardPending = Object.assign({}, g.discardPending);
     c.stealCandidates = g.stealCandidates.slice();
