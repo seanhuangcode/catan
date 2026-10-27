@@ -7,9 +7,9 @@
     "test": "node tests/simulate.js && node tests/rl.test.js && node tests/bridge.test.js",
     "start": "python3 -m http.server 8000",
     "train:imitation": "node rl/train.js imitation",
-    "train:ppo": "node rl/train.js ppo --init rl/checkpoints/imitation",
-    "eval": "node rl/train.js eval rl/checkpoints/ppo",
-    "export-model": "node rl/train.js export rl/checkpoints/ppo",
+    "train:ppo": "node rl/train.js ppo --init rl/checkpoints/ppo3 --games 48 --lr 0.0001",
+    "eval": "node rl/train.js eval rl/checkpoints/ppo3",
+    "export-model": "node rl/train.js export rl/checkpoints/ppo3",
     "test:e2e": "node tests/autopilot.e2e.js",
     "autopilot": "node bridge/autopilot.js --headed --start-game"
   },
