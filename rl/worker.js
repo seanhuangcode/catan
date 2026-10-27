@@ -30,10 +30,22 @@ function imitation(msg) {
   for (let g = 0; g < msg.games; g++) {
     const steps = [[], [], [], []];
     const record = s => steps[s.pid].push(s);
-    // With msg.dagger = p, each seat is played by the learner with probability p.
-    const agents = [0, 1, 2, 3].map(() => (msg.dagger && rng() < msg.dagger
-      ? new DaggerAgent(net, { rng, onStep: record })
-      : new HeuristicAgent({ onStep: record })));
+    let agents;
+    if (msg.teacher === 'search') {
+      // Expert iteration: seats played by policy+lookahead, labelled with the moves
+      // the search chose. Half the games are all-search self-play, half are one
+      // search seat against three heuristic bots (only search seats are recorded).
+      const all = rng() < 0.5;
+      const seat = Math.floor(rng() * 4);
+      agents = [0, 1, 2, 3].map(i => (all || i === seat
+        ? new RL.NetSearchAgent(net, { rng, onLabel: record, topK: msg.topK || 5 })
+        : new HeuristicAgent()));
+    } else {
+      // With msg.dagger = p, each seat is played by the learner with probability p.
+      agents = [0, 1, 2, 3].map(() => (msg.dagger && rng() < msg.dagger
+        ? new DaggerAgent(net, { rng, onStep: record })
+        : new HeuristicAgent({ onStep: record })));
+    }
     const game = playGame(agents, { rng });
     steps.forEach((list, pid) => {
       for (const s of list) {

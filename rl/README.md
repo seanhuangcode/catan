@@ -78,6 +78,18 @@ The final number comes from 4,000 fresh games: 32.4% ± 1.4 in 4-player games, s
 
 Two PPO runs from the same starting point (`ppo-run1/2.log.jsonl`) both levelled off at about 28–30% on their 800-game evaluations, so the improvement reproduces. Logs for every run are in `rl/checkpoints/*.log.jsonl`.
 
+## Experiments that didn't help (yet)
+
+These are kept in the code because they're useful tools, and so they aren't repeated blindly.
+
+- **Hand-written search bot** (`js/searchbot.js`). It tries every legal move on a private copy of the game (opponents' hidden cards replaced by placeholders, deck reshuffled) and scores the result with a hand-tuned evaluation. It won 16.4% of 800 games against three heuristic bots, so it's weaker than them, mainly because it doesn't trade.
+- **Network + lookahead** (`rl/search.js`, `NetSearchAgent`). This plays the policy's top moves on a private copy and scores each result with the value head:
+  - Choosing among *all* top moves: 33.2% vs 28.7% for the network alone on the same 600 games.
+  - Only choosing *where* (which spot, edge or tile) once the policy has picked the kind of move: 31.9% vs 29.9% on 900 games.
+  - Both gains are within noise.
+- **Expert iteration** (`train.js imitation --teacher search`). Training the network to imitate the lookahead's moves *collapsed* it from about 32% to 2% within about 250k samples. The lookahead scores "end turn" and "make an offer" as the current position, and builds as the value head's estimate after the build; the value head isn't precise enough for that comparison. So the search often preferred doing nothing, and imitation amplified it. A sharper value head (or deeper search) is needed before this can work.
+- **Catanatron's bots as opponents.** The strong open-source bots (AlphaBeta and value-function players in [bcollazo/catanatron](https://github.com/bcollazo/catanatron)) aren't in the PyPI release, and running code from that repository wasn't permitted in the training environment. Its stdio protocol is a good fit for the snapshot bridge (`bridge/snapshot.js`): an adapter would convert its JSON state into a snapshot and match our chosen move against its playable actions. Its tiles map to our coordinates with q = x, r = z, and its corners NORTH … NORTHWEST map to our corners 0 … 5. It's GPL-3.0, so it should stay a separate tool rather than be copied into this project.
+
 ## Limitations and next steps
 
 - **Trading.** The network makes 1-for-1 trade offers, but incoming offers are still answered by the hand-written trade evaluator, and it can't make counter-offers or uneven trades (2-for-1).

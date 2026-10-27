@@ -11,6 +11,8 @@ require('../js/ai.js');
 require('./encoding.js');
 require('./nn.js');
 require('./agent.js');
+require('../js/searchbot.js');
+require('./search.js');
 
 const C = globalThis.Catan;
 const RL = C.RL;

@@ -2,7 +2,7 @@
 /*
  * Training entry point.
  *
- *   node rl/train.js imitation [--samples 1500000] [--pointers] [--init ckpt] [--dagger 0.5] [--out rl/checkpoints/imitation]
+ *   node rl/train.js imitation [--samples 1500000] [--pointers] [--init ckpt] [--dagger 0.5 | --teacher search] [--out ...]
  *   node rl/train.js ppo --init rl/checkpoints/imitation [--iters 200] [--out rl/checkpoints/ppo]
  *   node rl/train.js eval rl/checkpoints/ppo [--games 1000]
  *   node rl/train.js export rl/checkpoints/ppo [--to models/catan-policy.js]
@@ -214,7 +214,7 @@ async function imitation() {
   console.log(`Imitation learning: ${net.size.toLocaleString()} parameters, ${HP.workers} workers, target ${target.toLocaleString()} samples`);
   while (seen < target) {
     round++;
-    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: (args.seed || 0) + round * 1000 + i, hp: HP, dagger: args.dagger || 0 }));
+    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: (args.seed || 0) + round * 1000 + i, hp: HP, dagger: args.dagger || 0, teacher: args.teacher, topK: args.topK }));
     const batch = concat(res.map(r => r.batch));
     // Decay the learning rate over the run.
     adam.lr = (args.lr || 1e-3) * Math.max(0.1, 1 - seen / target);
