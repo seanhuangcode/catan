@@ -301,6 +301,8 @@ async function ppo() {
     console.log(`iter ${it}: ${rs.steps} steps, train win vs bots ${rs.heuristicGames ? (100 * rs.heuristicWins / rs.heuristicGames).toFixed(0) : '-'}% (${rs.heuristicGames} games), ` +
       `entropy ${st.entropy.toFixed(3)}, kl ${st.kl.toFixed(4)}, clip ${(100 * st.clipFrac).toFixed(1)}%, value loss ${st.valueLoss.toFixed(4)} [${secs.toFixed(0)}s]`);
     if (it % (args.snapshotEvery || 5) === 0) await pushSnapshot();
+    // Save the latest weights often, so a restarted machine loses little work.
+    if (it % (args.saveEvery || 5) === 0) save(out + '-last', net, { kind: 'ppo', iter: it, hp: HP });
     if (it % evalEvery === 0 || it === iters) {
       const ev = await pool.evaluate(args.evalGames || 600, { seed: 4242 + it });
       line.eval = ev;
