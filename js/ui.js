@@ -379,7 +379,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         if (g.largestArmyHolder === p.id) badges.push('<span class="badge" title="Largest Army (+2 VP)">⚔️</span>');
         const status = g.phase === 'discard' && g.discardPending[p.id] ? '<span class="status">discarding…</span>' : '';
         return `<div class="player${p.id === g.current && g.phase !== 'gameOver' ? ' current' : ''}${isMe ? ' me' : ''}" style="--c:${p.color}">
-          <div class="avatar">${p.isBot ? '🤖' : '🙂'}</div>
+          <div class="avatar" title="${p.brain === 'neural' ? 'Neural network bot' : p.isBot ? 'Classic bot' : 'You'}">${p.brain === 'neural' ? '🧠' : p.isBot ? '🤖' : '🙂'}</div>
           <div class="pinfo">
             <div class="pname-row"><span class="pname">${esc(p.name)}</span>${badges.join('')}${status}</div>
             <div class="pstats">

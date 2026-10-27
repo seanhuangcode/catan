@@ -1,0 +1,37 @@
+{
+  "config": {
+    "input": 1808,
+    "hidden": [
+      256,
+      256
+    ],
+    "actions": 252
+  },
+  "kind": "imitation",
+  "samples": 2810938,
+  "eval": {
+    "games": 400,
+    "wins": 44,
+    "vp": 2428,
+    "turns": 27974,
+    "capped": 0,
+    "winRate": 0.11,
+    "ci": 0.03066319618043755,
+    "avgVp": 6.07,
+    "avgTurns": 69.935
+  },
+  "hp": {
+    "hidden": [
+      256,
+      256
+    ],
+    "workers": 4,
+    "gamma": 0.997,
+    "lambda": 0.95,
+    "shaping": 1,
+    "clip": 0.2,
+    "entropy": 0.003,
+    "valueCoef": 0.5,
+    "maxTurns": 300
+  }
+}

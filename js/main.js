@@ -41,6 +41,14 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     setValue('vp', prefs.vp);
     setValue('speed', prefs.speed);
     setValue('friendly', prefs.friendly);
+    const brain = form.elements.brain;
+    if (!C.Controller.hasModel()) {
+      brain.value = 'classic';
+      brain.disabled = true;
+      brain.title = 'No trained model found (models/catan-policy.js)';
+    } else if (prefs.brain) {
+      brain.value = prefs.brain;
+    }
     const colorInput = form.querySelector(`input[name=color][value="${prefs.color || 'red'}"]`) || form.querySelector('input[name=color]');
     colorInput.checked = true;
 
@@ -53,6 +61,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         vp: Number(form.elements.vp.value),
         speed: form.elements.speed.value,
         friendly: form.elements.friendly.checked,
+        brain: form.elements.brain.value,
       };
       savePrefs(opts);
       startGame(opts);
@@ -64,12 +73,17 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     const others = C.shuffle(COLORS.filter(c => c !== mine));
     const names = C.shuffle(BOT_NAMES.slice());
     const seats = [{ name: opts.name, color: mine.hex, isBot: false }];
-    for (let i = 0; i < opts.bots; i++) seats.push({ name: names[i], color: others[i].hex, isBot: true });
+    for (let i = 0; i < opts.bots; i++) {
+      // 'mixed' alternates neural and classic bots so you can compare them.
+      const neural = opts.brain === 'neural' || (opts.brain === 'mixed' && i % 2 === 0);
+      seats.push({ name: names[i], color: others[i].hex, isBot: true, brain: neural ? 'neural' : 'classic' });
+    }
     // Random seating; the engine also picks a random first player.
     C.shuffle(seats);
     const human = seats.findIndex(s => !s.isBot);
 
     const game = new C.Game({ players: seats, vpToWin: opts.vp, friendlyRobber: opts.friendly });
+    game.players.forEach((p, i) => { p.brain = seats[i].brain; });
     const ui = C.ui || (C.ui = new C.UI());
     const controller = new C.Controller(game, ui, { delay: SPEEDS[opts.speed] || SPEEDS.normal });
 

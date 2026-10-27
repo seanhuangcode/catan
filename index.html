@@ -45,6 +45,14 @@
             </select>
           </label>
         </div>
+        <label class="field">
+          <span>Bot type</span>
+          <select name="brain">
+            <option value="classic">Classic (hand-written rules)</option>
+            <option value="neural">Neural network (trained with RL)</option>
+            <option value="mixed">Mixed: neural and classic</option>
+          </select>
+        </label>
         <label class="check">
           <input type="checkbox" name="friendly">
           <span>Friendly robber <small>— the robber can't target players with 2 or fewer points</small></span>
@@ -87,6 +95,10 @@
   <script src="js/board.js"></script>
   <script src="js/game.js"></script>
   <script src="js/ai.js"></script>
+  <script src="rl/encoding.js"></script>
+  <script src="rl/nn.js"></script>
+  <script src="rl/agent.js"></script>
+  <script src="models/catan-policy.js" onerror="this.remove()"></script>
   <script src="js/controller.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>

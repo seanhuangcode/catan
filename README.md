@@ -25,6 +25,7 @@ npm start   # http://localhost:8000
 - **Trading.** Trade with the bank at 4:1, 3:1, or 2:1 depending on your harbors. You can offer trades to the bots, and bots will offer trades to you.
 - **Bots** pick setup spots, build, trade, play development cards, and use the robber. They also avoid feeding a player who is close to winning.
 - **Colonist-style UI.** The game log hides private info (stolen cards and bought dev cards are visible only to the players involved). You also get player panels, a bank display, dice, and a game-over screen with dice stats.
+- **Neural network bots** trained with reinforcement learning (see [`rl/README.md`](rl/README.md)). Choose them under "Bot type" on the start screen.
 - **Options:** 2 or 3 bots, points to win (8–15), bot speed, and the friendly robber.
 - **Keyboard:** <kbd>Space</kbd> rolls or ends your turn. <kbd>Esc</kbd> cancels build mode.
 
@@ -38,11 +39,14 @@ npm start   # http://localhost:8000
 | `js/controller.js` | Runs the bots in the browser and handles trade offers |
 | `js/ui.js` | SVG board, hand, action bar, log, and dialogs |
 | `js/main.js` | Start screen and game setup |
+| `rl/` | Reinforcement learning: encoding, neural network, training (see [`rl/README.md`](rl/README.md)) |
+| `models/catan-policy.js` | The trained network the browser loads |
 | `tests/simulate.js` | Headless self-play test |
+| `tests/rl.test.js` | Tests for the RL code (gradient check, legal moves) |
 
 ## Tests
 
 ```bash
-npm test          # plays 200 bot-only games, checking rule invariants after every move
+npm test          # 200 bot-only games with rule checks after every move, plus the RL tests
 node tests/simulate.js 1000
 ```

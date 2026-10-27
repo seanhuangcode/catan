@@ -18,7 +18,38 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       this.busy = false;
       this.timer = null;
       this.stopped = false;
+      // Bots with brain === 'neural' are driven by the trained policy network.
+      this.neural = {};
+      for (const p of game.players) {
+        if (p.brain === 'neural' && Controller.hasModel()) {
+          this.neural[p.id] = { agent: new C.RL.PolicyAgent(Controller.model(), { greedy: true }), ctx: C.RL.newContext() };
+        }
+      }
       game.on(() => this.schedule());
+    }
+
+    static hasModel() { return !!(C.RL && C.RL.PolicyAgent && C.RL_MODEL); }
+
+    static model() {
+      if (!Controller.net) Controller.net = C.RL.importModel(C.RL_MODEL);
+      return Controller.net;
+    }
+
+    botDiscard(pid) {
+      const g = this.game;
+      const nb = this.neural[pid];
+      if (nb) return nb.agent.chooseDiscard(g, pid, g.discardPending[pid], nb.ctx);
+      return C.AI.chooseDiscard(g, pid, g.discardPending[pid]);
+    }
+
+    botDecide(pid) {
+      const g = this.game;
+      const nb = this.neural[pid];
+      if (!nb) return C.AI.decide(g, pid);
+      if (nb.ctx.turnSeen !== g.turn) { nb.ctx.turnSeen = g.turn; nb.ctx.mainActions = 0; }
+      const action = nb.agent.decide(g, pid, nb.ctx);
+      if (g.phase === 'main') nb.ctx.mainActions++;
+      return action;
     }
 
     stop() {
@@ -51,7 +82,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
             if (!g.players[pid].isBot) continue;
             await sleep(this.delay * 0.5);
             if (this.stopped) return;
-            g.perform(pid, { type: 'discard', cards: C.AI.chooseDiscard(g, pid, g.discardPending[pid]) });
+            g.perform(pid, { type: 'discard', cards: this.botDiscard(pid) });
             acted = true;
           }
           return;
@@ -60,7 +91,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         if (!g.players[pid].isBot) return;
         await sleep(this.delayFor(g.phase));
         if (this.stopped || g.phase === 'gameOver') return;
-        const action = C.AI.decide(g, pid);
+        const action = this.botDecide(pid);
         acted = true;
         if (action.type === 'offer') {
           await this.botOffer(pid, action);

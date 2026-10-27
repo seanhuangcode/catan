@@ -4,9 +4,18 @@
   "description": "A browser Catan game modeled on colonist.io, with bot opponents.",
   "private": true,
   "scripts": {
-    "test": "node tests/simulate.js",
-    "start": "python3 -m http.server 8000"
+    "test": "node tests/simulate.js && node tests/rl.test.js && node tests/bridge.test.js",
+    "start": "python3 -m http.server 8000",
+    "train:imitation": "node rl/train.js imitation",
+    "train:ppo": "node rl/train.js ppo --init rl/checkpoints/imitation",
+    "eval": "node rl/train.js eval rl/checkpoints/ppo",
+    "export-model": "node rl/train.js export rl/checkpoints/ppo",
+    "test:e2e": "node tests/autopilot.e2e.js",
+    "autopilot": "node bridge/autopilot.js --headed --start-game"
   },
   "author": "Sean Huang",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
 }

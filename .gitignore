@@ -1,3 +1,8 @@
 node_modules/
 .DS_Store
 *.log
+rl/checkpoints/*.out
+rl/checkpoints/*-last.*
+bridge/.colonist-browser/
+bridge/recordings/
+bridge/profiles/colonist.calibration.json
