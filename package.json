@@ -1,0 +1,12 @@
+{
+  "name": "catan",
+  "version": "1.0.0",
+  "description": "A browser Catan game modeled on colonist.io, with bot opponents.",
+  "private": true,
+  "scripts": {
+    "test": "node tests/simulate.js",
+    "start": "python3 -m http.server 8000"
+  },
+  "author": "Sean Huang",
+  "license": "MIT"
+}
