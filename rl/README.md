@@ -6,7 +6,7 @@ It's written in plain JavaScript with no dependencies. Training runs on CPU core
 
 ## How it works
 
-**Observation (1,808 numbers).** The board from one player's point of view:
+**Observation (1,809 numbers).** The board from one player's point of view:
 - each tile's resource, number and robber;
 - each corner's buildings, harbor, production pips, and whether you can build there;
 - each edge's roads and whether you can build there;
@@ -15,13 +15,13 @@ It's written in plain JavaScript with no dependencies. Training runs on CPU core
 
 Opponents' hidden cards are never included.
 
-**Actions (252).** One flat list covers every kind of move: settlement, road, or city on each spot, robber on each tile, steal from each opponent, discard one card of each resource, roll, end turn, buy or play development cards, and 20 bank trades. A legality mask removes illegal moves, and `tests/rl.test.js` checks that every move the mask allows is accepted by the engine. Multi-card discards are made one card at a time.
+**Actions (272).** One flat list covers every kind of move: settlement, road, or city on each spot, robber on each tile, steal from each opponent, discard one card of each resource, roll, end turn, buy or play development cards, 20 bank trades, and 20 one-for-one trade offers to the other players (at most 2 per turn, never the same offer twice). A legality mask removes illegal moves, and `tests/rl.test.js` checks that every move the mask allows is accepted by the engine. Multi-card discards are made one card at a time.
 
-**Network.** A multilayer perceptron, 1,808 → 256 → 256, with a policy head (252 action logits) and a value head (predicted outcome).
+**Network.** A multilayer perceptron, 1,809 → 256 → 256, with a policy head (272 action logits) and a value head (predicted outcome).
 
 On top of that are **pointer heads**: for each kind of location (settlement spot, city, road, robber tile, steal target), one shared scorer rates every location from that location's own features (and its neighbors'), conditioned on the overall game state. Without them, the network has to learn separately for each of the 54 corners that "high pips = good spot"; with them, what it learns about one corner applies to every corner. Adding pointer heads raised imitation accuracy from about 75% to 84%.
 
-That's about 635,000 parameters in total. The forward and backward passes and the Adam optimizer are hand-written in `nn.js`, and the input is mostly zeros, so the first layer only processes the nonzero entries.
+That's about 640,000 parameters in total. The forward and backward passes and the Adam optimizer are hand-written in `nn.js`, and the input is mostly zeros, so the first layer only processes the nonzero entries.
 
 **Training happens in two stages:**
 1. **Imitation** (`train.js imitation`). The hand-written bots play each other, and the network learns to predict their moves (cross-entropy) and the game outcome (value regression). This gives a competent starting policy, which is far faster than learning from random play.
@@ -61,9 +61,26 @@ Training logs go to `rl/checkpoints/*.log.jsonl`.
 
 The metric is the win rate of one network seat against three copies of the hand-written bot over many games, with a random seat each game. A bot exactly as strong as the others wins 25% in 4-player games. Reported numbers include a 95% confidence interval.
 
+## Results so far
+
+Win rate of one network seat against three hand-written bots (4-player games; 25% = as strong as the bots). Each number comes from 400–800 games, which is about ±3 percentage points.
+
+| Model | Win rate | What changed |
+| --- | --- | --- |
+| Imitation, plain MLP | ~10% | Copies the bot's moves; 75% move accuracy |
+| + PPO (first run) | ~13% | Plateaued quickly |
+| Imitation + pointer heads | ~8% | 90% move accuracy, yet still lost: it couldn't trade |
+| + trade offers | ~14% | Matches the bots' behavior closely |
+| + DAgger | ~14% | |
+| **+ PPO** (`rl/checkpoints/ppo`) | **32.4% ± 1.4** | About 225 iterations (~21k games) of reinforcement learning against bots, itself, and past versions |
+
+The final number comes from 4,000 fresh games: 32.4% ± 1.4 in 4-player games, so the network wins about 30% more often than a hand-written bot in the same seat. In 3-player games it wins 32.1% ± 1.4, where 33% is parity: it's only even there, because training used 4-player games only.
+
+Two PPO runs from the same starting point (`ppo-run1/2.log.jsonl`) both levelled off at about 28–30% on their 800-game evaluations, so the improvement reproduces. Logs for every run are in `rl/checkpoints/*.log.jsonl`.
+
 ## Limitations and next steps
 
-- **Trading.** The network doesn't propose player-to-player trades, and incoming offers are answered by the hand-written trade evaluator. It only trades with the bank and harbors. Adding offer and accept actions is the biggest missing piece.
+- **Trading.** The network makes 1-for-1 trade offers, but incoming offers are still answered by the hand-written trade evaluator, and it can't make counter-offers or uneven trades (2-for-1).
 - **Player count.** Training uses 4-player games only. 3-player games work, but they're out of distribution.
 - **Architecture.** A plain MLP doesn't know which corners touch which tiles; it has to learn that from data. A graph neural network over the board would learn faster and generalize better.
 - **Opponent modeling.** Bigger gains would likely come from search at decision time (e.g. Monte Carlo rollouts with the policy) and from tracking opponents' likely hands based on what's been revealed.

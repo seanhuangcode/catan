@@ -9,17 +9,17 @@
     "pointers": true
   },
   "kind": "ppo",
-  "iter": 75,
+  "iter": 225,
   "eval": {
     "games": 800,
-    "wins": 229,
-    "vp": 6145,
-    "turns": 55987,
+    "wins": 236,
+    "vp": 6218,
+    "turns": 55930,
     "capped": 0,
-    "winRate": 0.28625,
-    "ci": 0.031322533771631564,
-    "avgVp": 7.68125,
-    "avgTurns": 69.98375
+    "winRate": 0.295,
+    "ci": 0.03160215103438371,
+    "avgVp": 7.7725,
+    "avgTurns": 69.9125
   },
   "hp": {
     "hidden": [
@@ -34,5 +34,22 @@
     "entropy": 0.003,
     "valueCoef": 0.5,
     "maxTurns": 300
+  },
+  "note": "Iteration 225 of PPO run 2 (see ppo-run2.log.jsonl), started from imitation-dagger.",
+  "finalEval": {
+    "players4": {
+      "games": 4000,
+      "winRate": 0.324,
+      "ci95": 0.014,
+      "avgVp": 7.94
+    },
+    "players3": {
+      "games": 4000,
+      "winRate": 0.321,
+      "ci95": 0.014,
+      "avgVp": 7.75
+    },
+    "opponents": "hand-written bots (js/ai.js)",
+    "seed": 31337
   }
 }
