@@ -161,6 +161,22 @@ function shuffle(a) {
   return a;
 }
 
+/**
+ * Parameters a run may change, as a 0/1 mask (or null for all). With
+ * --only respond, only the accept/decline outputs train; everything the rest
+ * of the policy depends on stays frozen.
+ */
+function trainableMask(net) {
+  if (args.only !== 'respond') return null;
+  const mask = new Uint8Array(net.size);
+  const l = net.policy;
+  for (let a = RL.A.RESPOND; a < RL.A.RESPOND + 2; a++) {
+    for (let i = 0; i < l.nIn; i++) mask[l.w + i * l.nOut + a] = 1;
+    mask[l.b + a] = 1;
+  }
+  return mask;
+}
+
 async function trainOnBatch(pool, net, adam, batch, mode, opts) {
   await pool.each(() => ({ type: 'setBatch', batch }));
   const grads = new Float32Array(net.size);
@@ -170,6 +186,7 @@ async function trainOnBatch(pool, net, adam, batch, mode, opts) {
     for (let s = 0; s < ids.length; s += opts.minibatch) {
       const mb = ids.slice(s, s + opts.minibatch);
       const st = await pool.gradients(mb, mode, HP, grads);
+      if (opts.trainable) for (let k = 0; k < grads.length; k++) if (!opts.trainable[k]) grads[k] = 0;
       adam.step(net.params, grads, mb.length);
       for (const [k, v] of Object.entries(st)) total[k] = (total[k] || 0) + v;
     }
@@ -207,6 +224,7 @@ async function imitation() {
   const pool = new Pool(HP.workers, net);
   const logFile = out + '.log.jsonl';
   const gamesPerWorker = args.games || 25;
+  const trainable = trainableMask(net);
   let seen = 0;
   let round = 0;
   let best = -1;
@@ -214,11 +232,11 @@ async function imitation() {
   console.log(`Imitation learning: ${net.size.toLocaleString()} parameters, ${HP.workers} workers, target ${target.toLocaleString()} samples`);
   while (seen < target) {
     round++;
-    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: (args.seed || 0) + round * 1000 + i, hp: HP, dagger: args.dagger || 0, teacher: args.teacher, topK: args.topK }));
+    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: (args.seed || 0) + round * 1000 + i, hp: HP, dagger: args.dagger || 0, teacher: args.teacher, topK: args.topK, only: args.only }));
     const batch = concat(res.map(r => r.batch));
     // Decay the learning rate over the run.
     adam.lr = (args.lr || 1e-3) * Math.max(0.1, 1 - seen / target);
-    const st = await trainOnBatch(pool, net, adam, batch, 'bc', { epochs: 1, minibatch: args.minibatch || 512 });
+    const st = await trainOnBatch(pool, net, adam, batch, 'bc', { epochs: 1, minibatch: args.minibatch || 512, trainable });
     seen += batch.n;
     const secs = (Date.now() - t0) / 1000;
     const line = { round, samples: seen, secs, lr: adam.lr, ...st };

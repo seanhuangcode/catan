@@ -104,6 +104,12 @@ function check(name, cond, detail) {
       return legal[Math.floor(this.rng() * legal.length)];
     }
     act(game, me, ctx) { return RL.toAction(game, me, this.pick(game, me, ctx)); }
+    respond(game, me, from, offer, ctx) {
+      ctx.respondTo = { from, give: offer.give, get: offer.get };
+      const a = this.pick(game, me, ctx);
+      ctx.respondTo = null;
+      return a === RL.A.RESPOND;
+    }
     discard(game, me, n, ctx) {
       ctx.discardSel = C.emptyHand();
       for (let k = 0; k < n; k++) ctx.discardSel[C.RESOURCES[this.pick(game, me, ctx) - RL.A.DISCARD]]++;

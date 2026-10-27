@@ -49,6 +49,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   block('MONO', 5);
   block('BANK', 20); // give (best ratio) of one resource for 1 of another
   block('OFFER', 20); // offer other players 1 of one resource for 1 of another
+  block('RESPOND', 2); // answer another player's offer: accept, decline
   const N_ACTIONS = n;
 
   const YOP_PAIRS = [];
@@ -72,7 +73,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   // Kept last so models trained before it still read the same inputs.
   const PUBLIC_F = 5;
   const O_PUBLIC = O_SELF + SELF_F;
-  const OBS_SIZE = O_PUBLIC + (MAX_SEATS - 1) * PUBLIC_F;
+  // Appended later still: the trade offer being answered (when ctx.respondTo is set):
+  // flag, cards I would receive, cards I would give, offering seat.
+  const RESPOND_F = 1 + 5 + 5 + (MAX_SEATS - 1);
+  const O_RESPOND = O_PUBLIC + (MAX_SEATS - 1) * PUBLIC_F;
+  const OBS_SIZE = O_RESPOND + RESPOND_F;
 
   /**
    * Extra per-decision context the engine doesn't track:
@@ -80,10 +85,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
    *   mainActions  main-phase actions taken so far this turn
    *   offers       trade offers made so far this turn
    *   offered      action indices of those offers (an offer isn't repeated in a turn)
+   *   respondTo    {from, give, get} while answering someone's offer (give = what they give me)
    *   turnSeen     turn these counters belong to (reset them when it changes)
    */
   function newContext() {
-    return { discardSel: null, mainActions: 0, offers: 0, offered: [], turnSeen: -1 };
+    return { discardSel: null, mainActions: 0, offers: 0, offered: [], turnSeen: -1, respondTo: null };
   }
 
   /** Resets the per-turn counters in `ctx` when the game has moved to a new turn. */
@@ -233,6 +239,15 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         for (let i = 0; i < 5; i++) out[base + i] = game.publicHands[pl.id][R[i]] / 5;
       }
     }
+    if (ctx && ctx.respondTo) {
+      const t = ctx.respondTo;
+      out[O_RESPOND] = 1;
+      for (let i = 0; i < 5; i++) {
+        out[O_RESPOND + 1 + i] = (t.give[R[i]] || 0) / 2;
+        out[O_RESPOND + 6 + i] = (t.get[R[i]] || 0) / 2;
+      }
+      out[O_RESPOND + 11 + rel(game, me, t.from) - 1] = 1;
+    }
     return out;
   }
 
@@ -269,6 +284,12 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     mask = mask || new Uint8Array(N_ACTIONS);
     mask.fill(0);
     const p = game.players[me];
+    if (ctx && ctx.respondTo) {
+      // Answering someone else's trade offer: only accept or decline.
+      if (C.hasResources(p.hand, ctx.respondTo.get)) mask[A.RESPOND] = 1;
+      mask[A.RESPOND + 1] = 1;
+      return mask;
+    }
     switch (game.phase) {
       case 'setupSettlement':
         for (const v of game.validSettlementSpots(me, true)) mask[A.SETTLE + v] = 1;
@@ -340,6 +361,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       const [g, s] = BANK_PAIRS[a - A.BANK];
       return { type: 'bankTrade', give: { [g]: game.tradeRatio(me, g) }, get: { [s]: 1 } };
     }
+    if (a >= A.RESPOND) return { type: 'respond', accept: a === A.RESPOND };
     // Not a Game#perform action: whoever runs the game asks the other players.
     const [g, s] = BANK_PAIRS[a - A.OFFER];
     return { type: 'offer', give: { [g]: 1 }, get: { [s]: 1 } };
@@ -377,6 +399,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         if (action.give[gives[0]] !== game.tradeRatio(me, gives[0])) return -1;
         return A.BANK + BANK_PAIRS.findIndex(([g, s]) => g === gives[0] && s === gets[0]);
       }
+      case 'respond': return action.accept ? A.RESPOND : A.RESPOND + 1;
       case 'offer': {
         const gives = R.filter(r => action.give[r]);
         const gets = R.filter(r => action.get[r]);

@@ -29,7 +29,8 @@ function imitation(msg) {
   const all = [];
   for (let g = 0; g < msg.games; g++) {
     const steps = [[], [], [], []];
-    const record = s => steps[s.pid].push(s);
+    // msg.only === 'respond': keep only accept/decline decisions (to teach just that head).
+    const record = msg.only === 'respond' ? s => { if (s.action >= RL.A.RESPOND) steps[s.pid].push(s); } : s => steps[s.pid].push(s);
     let agents;
     if (msg.teacher === 'search') {
       // Expert iteration: seats played by policy+lookahead, labelled with the moves

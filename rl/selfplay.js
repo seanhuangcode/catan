@@ -43,6 +43,16 @@ class HeuristicAgent {
     return action;
   }
 
+  respond(game, me, from, offer, ctx) {
+    const accept = C.AI.evaluateTrade(game, me, from, offer.give, offer.get);
+    if (this.onStep) {
+      ctx.respondTo = { from, give: offer.give, get: offer.get };
+      this.label(game, me, ctx, accept ? RL.A.RESPOND : RL.A.RESPOND + 1);
+      ctx.respondTo = null;
+    }
+    return accept;
+  }
+
   discard(game, me, count, ctx) {
     const cards = C.AI.chooseDiscard(game, me, count);
     if (this.onStep) {
@@ -80,12 +90,21 @@ class DaggerAgent {
     this.teacher.discard(game, me, count, ctx);
     return this.student.discard(game, me, count, ctx);
   }
+
+  respond(game, me, from, offer, ctx) {
+    this.teacher.respond(game, me, from, offer, ctx);
+    return this.student.respond(game, me, from, offer, ctx);
+  }
 }
 
-function resolveOffer(game, pid, offer) {
-  // Every seat answers offers with the heuristic trade evaluator (the
-  // network makes offers but doesn't learn how to answer them yet).
-  const accepters = game.players.filter(o => o.id !== pid && C.AI.evaluateTrade(game, o.id, pid, offer.give, offer.get));
+/** Asks every other seat about `pid`'s offer and makes the trade with the first who accepts. */
+function resolveOffer(game, pid, offer, agents, ctxs) {
+  const accepters = game.players.filter(o => {
+    if (o.id === pid) return false;
+    const agent = agents && agents[o.id];
+    if (agent && agent.respond) return agent.respond(game, o.id, pid, offer, ctxs[o.id]);
+    return C.AI.evaluateTrade(game, o.id, pid, offer.give, offer.get);
+  });
   if (accepters.length) game.perform(pid, { type: 'playerTrade', to: accepters[0].id, give: offer.give, get: offer.get });
 }
 
@@ -121,7 +140,7 @@ function playGame(agents, opts = {}) {
     const action = agent.act(game, pid, ctx);
     if (action.type === 'offer') {
       RL.noteOffer(ctx, RL.fromAction(game, pid, action));
-      resolveOffer(game, pid, action);
+      resolveOffer(game, pid, action, agents, ctxs);
     } else {
       const res = game.perform(pid, action);
       if (!res.ok) {

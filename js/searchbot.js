@@ -224,6 +224,8 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       return out;
     }
 
+    respond(game, me, from, offer) { return C.AI.evaluateTrade(game, me, from, offer.give, offer.get); }
+
     // Agent interface used by rl/selfplay.js playGame.
     act(game, me, ctx) { return this.decide(game, me, ctx); }
     discard(game, me, count) { return this.chooseDiscard(game, me, count); }

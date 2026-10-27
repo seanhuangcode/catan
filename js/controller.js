@@ -42,6 +42,13 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       return C.AI.chooseDiscard(g, pid, g.discardPending[pid]);
     }
 
+    /** Whether bot `pid` takes `from`'s offer of offer.give for offer.get. */
+    botAccepts(pid, from, offer) {
+      const nb = this.neural[pid];
+      if (nb) return nb.agent.respond(this.game, pid, from, offer, nb.ctx);
+      return C.AI.evaluateTrade(this.game, pid, from, offer.give, offer.get);
+    }
+
     botDecide(pid) {
       const g = this.game;
       const nb = this.neural[pid];
@@ -119,7 +126,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       for (const o of g.players) {
         if (o.id === pid) continue;
         if (o.isBot) {
-          if (C.AI.evaluateTrade(g, o.id, pid, offer.give, offer.get)) accepters.push(o.id);
+          if (this.botAccepts(o.id, pid, offer)) accepters.push(o.id);
         } else if (C.hasResources(o.hand, offer.get)) {
           if (await this.ui.askTradeOffer(pid, offer)) accepters.push(o.id);
         }
@@ -147,7 +154,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       await sleep(Math.min(600, this.delay));
       return g.players
         .filter(o => o.id !== pid)
-        .map(o => ({ pid: o.id, accept: o.isBot && C.AI.evaluateTrade(g, o.id, pid, give, get) }));
+        .map(o => ({ pid: o.id, accept: o.isBot && this.botAccepts(o.id, pid, { give, get }) }));
     }
   }
 

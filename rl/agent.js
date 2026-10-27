@@ -84,6 +84,16 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       return RL.toAction(game, me, this.choose(game, me, ctx));
     }
 
+    /** Answers player `from`'s offer to give us `offer.give` for `offer.get`. */
+    respond(game, me, from, offer, ctx) {
+      // Models trained before accept/decline existed answer like the classic bot.
+      if (this.net.config.actions <= RL.A.RESPOND) return C.AI.evaluateTrade(game, me, from, offer.give, offer.get);
+      ctx.respondTo = { from, give: offer.give, get: offer.get };
+      const a = this.choose(game, me, ctx);
+      ctx.respondTo = null;
+      return a === RL.A.RESPOND;
+    }
+
     // Agent interface used by RL.playGame.
     act(game, me, ctx) { return RL.toAction(game, me, this.choose(game, me, ctx)); }
     discard(game, me, count, ctx) { return this.chooseDiscard(game, me, count, ctx); }
