@@ -11,7 +11,10 @@
     "eval": "node rl/train.js eval rl/checkpoints/ppo3",
     "export-model": "node rl/train.js export rl/checkpoints/ppo3",
     "test:e2e": "node tests/autopilot.e2e.js",
-    "autopilot": "node bridge/autopilot.js --headed --start-game"
+    "autopilot": "node bridge/autopilot.js --headed --start-game",
+    "record-colonist": "node bridge/record-colonist.js",
+    "calibrate-colonist": "node bridge/record-colonist.js --calibrate",
+    "setup-browser": "npx playwright install chromium"
   },
   "author": "Sean Huang",
   "license": "MIT",

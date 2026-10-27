@@ -43,7 +43,13 @@ node bridge/autopilot.js --advise --headed   # only shows suggestions, you click
 
 ### Finishing colonist.io support
 
-1. On your own computer, run `node bridge/record-colonist.js` and play one full game, ideally against colonist.io's computer opponents. It saves every network message, your clicks (with the element under the pointer), and periodic screenshots to `bridge/recordings/`.
+1. On your own computer, record one game:
+   ```bash
+   npm install
+   npm run setup-browser      # downloads the browser Playwright drives (once)
+   npm run record-colonist    # opens colonist.io; play a game against bots, then Ctrl+C here
+   ```
+   Play as a **guest** (don't log in), so the recording contains no account details. It saves every network message, your clicks (with the element under the pointer), and periodic screenshots to `bridge/recordings/`.
 2. Colonist.io sends game state over a WebSocket. Use the recording to write `readSnapshot()`. It should keep a running copy of the game from those messages, convert colonist's tile and corner numbering to the `[q, r, corner]` coordinates above, and return a snapshot. The recorded screenshots show what the true state was at each moment, so you can check the reader against them.
 3. Fill in the remaining dialog moves in `performMove()` using the selectors in `clicks.jsonl`.
 4. Test in advice mode first (`--profile colonist`, the default for colonist): it draws a ring on the suggested spot. Switch to `--auto` only once the suggestions consistently line up.
