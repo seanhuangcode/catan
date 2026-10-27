@@ -9,17 +9,17 @@
     "pointers": true
   },
   "kind": "ppo",
-  "iter": 50,
+  "iter": 75,
   "eval": {
     "games": 800,
-    "wins": 212,
-    "vp": 6139,
-    "turns": 55348,
+    "wins": 229,
+    "vp": 6145,
+    "turns": 55987,
     "capped": 0,
-    "winRate": 0.265,
-    "ci": 0.030582830967717817,
-    "avgVp": 7.67375,
-    "avgTurns": 69.185
+    "winRate": 0.28625,
+    "ci": 0.031322533771631564,
+    "avgVp": 7.68125,
+    "avgTurns": 69.98375
   },
   "hp": {
     "hidden": [
