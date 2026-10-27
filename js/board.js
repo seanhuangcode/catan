@@ -47,6 +47,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   // Spacing (in coastal edges) between consecutive harbors around the 30-edge coastline.
   const PORT_GAPS = [3, 3, 4, 3, 3, 4, 3, 3, 4];
 
+  // Exposed for code that needs the fixed board topology (e.g. rl/encoding.js).
+  C.boardGeometry = () => buildGeometry();
+
   function buildGeometry() {
     const SQ3 = Math.sqrt(3);
     const hexes = [];

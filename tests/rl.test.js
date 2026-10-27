@@ -52,6 +52,44 @@ function check(name, cond, detail) {
   check('gradient check', worst < 2e-2, `worst relative error ${worst.toFixed(4)}`);
 }
 
+// ------------------------------------------- gradient check, pointer heads
+{
+  const rng = mulberry32(11);
+  const net = new RL.Net({ input: RL.OBS_SIZE, hidden: [10, 8], actions: RL.N_ACTIONS, pointers: true }).init(rng);
+  for (let i = 0; i < net.size; i++) net.params[i] += (rng() - 0.5) * 0.1;
+  const g = playGame([0, 1, 2, 3].map(() => new HeuristicAgent()), { rng: mulberry32(2), maxTurns: 25 });
+  const sp = RL.sparsify(RL.encode(g, 0, RL.newContext()));
+  const cL = new Float32Array(RL.N_ACTIONS).map(() => rng() - 0.5);
+  const loss = () => {
+    net.forward(sp.idx, sp.val);
+    let s = 0.4 * net.value;
+    for (let j = 0; j < cL.length; j++) s += cL[j] * net.logits[j];
+    return s;
+  };
+  const grads = new Float32Array(net.size);
+  loss();
+  net.backward(sp.idx, sp.val, cL, 0.4, grads);
+  // Check every pointer-head parameter plus a sample of the rest.
+  const ids = [];
+  const firstPointer = net.groups[0].layer.w;
+  for (let i = firstPointer; i < net.size; i++) ids.push(i);
+  for (let k = 0; k < 600; k++) ids.push(Math.floor(rng() * firstPointer));
+  let worst = 0;
+  for (const i of ids) {
+    const old = net.params[i];
+    net.params[i] = old + 1e-2;
+    const up = loss();
+    net.params[i] = old - 1e-2;
+    const down = loss();
+    net.params[i] = old;
+    const num = (up - down) / 2e-2;
+    if (Math.abs(num) > 1e-3 || Math.abs(grads[i]) > 1e-3) {
+      worst = Math.max(worst, Math.abs(num - grads[i]) / Math.max(1e-3, Math.abs(num) + Math.abs(grads[i])));
+    }
+  }
+  check('gradient check with pointer heads', worst < 2e-2, `worst relative error ${worst.toFixed(4)}`);
+}
+
 // --------------------------------------------- legal actions always accepted
 {
   class RandomAgent {

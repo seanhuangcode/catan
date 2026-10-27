@@ -100,6 +100,16 @@ module.exports = {
       case 'discard':
         for (const [r, n] of Object.entries(move.cards)) await driver.clickTimes(pick(r), n);
         return driver.clickSelector('[data-act=ok]');
+      case 'offer': {
+        await driver.clickSelector('button[data-action=trade]');
+        for (const [r, n] of Object.entries(move.give)) await driver.clickTimes(`.trade-row:nth-child(1) ${pick(r)}`, n);
+        for (const [r, n] of Object.entries(move.get)) await driver.clickTimes(`.trade-row:nth-child(2) ${pick(r)}`, n);
+        await driver.clickSelector('[data-act=offer]');
+        // Wait for the answers, then take the trade with the first player who accepted.
+        await driver.page.waitForSelector('.responses .response', { timeout: 5000 });
+        if (await driver.page.locator('.btn.accept').count()) await driver.clickSelector('.btn.accept');
+        return driver.clickSelector('[data-act=close]');
+      }
       case 'bankTrade': {
         await driver.clickSelector('button[data-action=trade]');
         for (const [r, n] of Object.entries(move.give)) await driver.clickTimes(`.trade-row:nth-child(1) ${pick(r)}`, n);

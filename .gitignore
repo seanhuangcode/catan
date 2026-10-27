@@ -6,3 +6,10 @@ rl/checkpoints/*-last.*
 bridge/.colonist-browser/
 bridge/recordings/
 bridge/profiles/colonist.calibration.json
+# Only the checkpoints worth keeping are committed; training logs always are.
+rl/checkpoints/*.bin
+rl/checkpoints/*.json
+!rl/checkpoints/imitation-dagger.bin
+!rl/checkpoints/imitation-dagger.json
+!rl/checkpoints/ppo.bin
+!rl/checkpoints/ppo.json

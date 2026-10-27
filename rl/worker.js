@@ -6,7 +6,7 @@
 'use strict';
 
 const { parentPort, workerData } = require('worker_threads');
-const { RL, HeuristicAgent, playGame, finalize, pack, accumulateGrads, mulberry32 } = require('./selfplay.js');
+const { RL, HeuristicAgent, DaggerAgent, playGame, finalize, pack, accumulateGrads, mulberry32 } = require('./selfplay.js');
 
 const net = new RL.Net(workerData.config, new Float32Array(workerData.params));
 const grads = new Float32Array(workerData.grads);
@@ -29,7 +29,11 @@ function imitation(msg) {
   const all = [];
   for (let g = 0; g < msg.games; g++) {
     const steps = [[], [], [], []];
-    const agents = [0, 1, 2, 3].map(() => new HeuristicAgent({ onStep: s => steps[s.pid].push(s) }));
+    const record = s => steps[s.pid].push(s);
+    // With msg.dagger = p, each seat is played by the learner with probability p.
+    const agents = [0, 1, 2, 3].map(() => (msg.dagger && rng() < msg.dagger
+      ? new DaggerAgent(net, { rng, onStep: record })
+      : new HeuristicAgent({ onStep: record })));
     const game = playGame(agents, { rng });
     steps.forEach((list, pid) => {
       for (const s of list) {

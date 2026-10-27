@@ -28,6 +28,14 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       const last = sizes[sizes.length - 1];
       this.policy = add(last, config.actions);
       this.valueHead = add(last, 1);
+      // Pointer heads (optional): appended last so older checkpoints load as a prefix.
+      this.groups = [];
+      if (config.pointers) {
+        for (const g of C.RL.pointerGroups()) {
+          this.groups.push(Object.assign({}, g, { layer: add(last, g.F), z: new Float32Array(g.F), dz: new Float32Array(g.F), feat: new Float32Array(g.count * g.F) }));
+        }
+        this.dense = new Float32Array(config.input);
+      }
       this.size = off;
       this.params = params || new Float32Array(off);
       this.grads = null;
@@ -55,6 +63,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       for (const l of this.layers) fill(l, Math.sqrt(2 / Math.min(l.nIn, 256)));
       fill(this.policy, 0.01);
       fill(this.valueHead, 0.01);
+      for (const g of this.groups) fill(g.layer, 0); // start as a no-op
       return this;
     }
 
@@ -88,7 +97,27 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       const v = new Float32Array(1);
       this.head(this.valueHead, prev, v);
       this.value = v[0];
+      if (this.groups.length) this.pointerForward(idx, val, prev);
       return this;
+    }
+
+    /** Adds feature(location) . (A h + c) to each location action's logit. */
+    pointerForward(idx, val, top) {
+      const dense = this.dense;
+      dense.fill(0);
+      for (let k = 0; k < idx.length; k++) dense[idx[k]] = val[k];
+      for (const g of this.groups) {
+        this.head(g.layer, top, g.z);
+        const feat = g.feat;
+        feat.fill(0);
+        for (let i = 0; i < g.count; i++) {
+          const base = i * g.F;
+          for (let k = g.offsets[i]; k < g.offsets[i + 1]; k++) feat[base + g.slots[k]] += dense[g.obs[k]];
+          let s = 0;
+          for (let f = 0; f < g.F; f++) s += feat[base + f] * g.z[f];
+          this.logits[g.start + i] += s;
+        }
+      }
     }
 
     head(l, x, out) {
@@ -115,6 +144,17 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       dTop.fill(0);
       this.headBackward(this.policy, top, dLogits, dTop, G);
       this.headBackward(this.valueHead, top, [dValue], dTop, G);
+      for (const g of this.groups) {
+        const dz = g.dz;
+        dz.fill(0);
+        for (let i = 0; i < g.count; i++) {
+          const d = dLogits[g.start + i];
+          if (d === 0) continue;
+          const base = i * g.F;
+          for (let f = 0; f < g.F; f++) dz[f] += d * g.feat[base + f];
+        }
+        this.headBackward(g.layer, top, dz, dTop, G);
+      }
 
       for (let li = nL - 1; li >= 0; li--) {
         const l = this.layers[li];
@@ -269,6 +309,31 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     return sign * (1 + m / 1024) * 2 ** (e - 15);
   }
 
+  /**
+   * Copies weights from `src` into `dst` layer by layer, for networks whose
+   * inputs or actions were extended by appending (new rows/columns start at
+   * zero, so the new network behaves like the old one at first).
+   */
+  function transplant(src, dst) {
+    const copy = (a, b) => {
+      if (!a || !b) return;
+      const nIn = Math.min(a.nIn, b.nIn);
+      const nOut = Math.min(a.nOut, b.nOut);
+      for (let i = 0; i < nIn; i++) {
+        for (let o = 0; o < nOut; o++) dst.params[b.w + i * b.nOut + o] = src.params[a.w + i * a.nOut + o];
+      }
+      for (let o = 0; o < nOut; o++) dst.params[b.b + o] = src.params[a.b + o];
+    };
+    const zero = l => dst.params.fill(0, l.w, l.b + l.nOut);
+    dst.layers.forEach((l, i) => { if (src.layers[i]) { zero(l); copy(src.layers[i], l); } });
+    zero(dst.policy);
+    copy(src.policy, dst.policy);
+    zero(dst.valueHead);
+    copy(src.valueHead, dst.valueHead);
+    dst.groups.forEach((g, i) => { zero(g.layer); if (src.groups[i]) copy(src.groups[i].layer, g.layer); });
+    return dst;
+  }
+
   /** Packs a model as {config, dtype, data} with base64 weights. */
   function exportModel(net, dtype = 'float16', meta = {}) {
     let bytes;
@@ -294,5 +359,5 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     return net;
   }
 
-  C.RL = Object.assign(C.RL || {}, { Net, Adam, maskedSoftmax, exportModel, importModel });
+  C.RL = Object.assign(C.RL || {}, { Net, Adam, maskedSoftmax, transplant, exportModel, importModel });
 })(Catan);

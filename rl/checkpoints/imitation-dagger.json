@@ -1,24 +1,25 @@
 {
   "config": {
-    "input": 1808,
+    "input": 1809,
     "hidden": [
       256,
       256
     ],
-    "actions": 252
+    "actions": 272,
+    "pointers": true
   },
   "kind": "imitation",
-  "samples": 2810938,
+  "samples": 1364368,
   "eval": {
-    "games": 400,
-    "wins": 44,
-    "vp": 2428,
-    "turns": 27974,
+    "games": 600,
+    "wins": 87,
+    "vp": 3974,
+    "turns": 41158,
     "capped": 0,
-    "winRate": 0.11,
-    "ci": 0.03066319618043755,
-    "avgVp": 6.07,
-    "avgTurns": 69.935
+    "winRate": 0.145,
+    "ci": 0.028173934762471497,
+    "avgVp": 6.623333333333333,
+    "avgTurns": 68.59666666666666
   },
   "hp": {
     "hidden": [

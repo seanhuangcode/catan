@@ -106,7 +106,7 @@ async function run(opts) {
       const after = await profile.readSnapshot(page);
       changed = !after || stateKey(after) !== key;
     }
-    if (changed) stuck = 0;
+    if (changed || move.kind === 'offer') stuck = 0; // a declined offer changes nothing
     else {
       stats.retries++;
       if (++stuck >= 3) throw new Error(`Move had no effect three times in a row: ${describe(move)}`);

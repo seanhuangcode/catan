@@ -46,9 +46,10 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       const g = this.game;
       const nb = this.neural[pid];
       if (!nb) return C.AI.decide(g, pid);
-      if (nb.ctx.turnSeen !== g.turn) { nb.ctx.turnSeen = g.turn; nb.ctx.mainActions = 0; }
+      C.RL.syncTurn(nb.ctx, g);
       const action = nb.agent.decide(g, pid, nb.ctx);
       if (g.phase === 'main') nb.ctx.mainActions++;
+      if (action.type === 'offer') C.RL.noteOffer(nb.ctx, C.RL.fromAction(g, pid, action));
       return action;
     }
 

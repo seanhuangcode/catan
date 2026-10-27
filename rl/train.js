@@ -2,7 +2,7 @@
 /*
  * Training entry point.
  *
- *   node rl/train.js imitation [--samples 1500000] [--out rl/checkpoints/imitation]
+ *   node rl/train.js imitation [--samples 1500000] [--pointers] [--init ckpt] [--dagger 0.5] [--out rl/checkpoints/imitation]
  *   node rl/train.js ppo --init rl/checkpoints/imitation [--iters 200] [--out rl/checkpoints/ppo]
  *   node rl/train.js eval rl/checkpoints/ppo [--games 1000]
  *   node rl/train.js export rl/checkpoints/ppo [--to models/catan-policy.js]
@@ -63,6 +63,23 @@ function load(file) {
   const buf = fs.readFileSync(file + '.bin');
   const params = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   return { meta, config: meta.config, params };
+}
+
+/** A checkpoint's config updated to the current observation and action sizes. */
+function currentConfig(config) {
+  return Object.assign({}, config, { input: RL.OBS_SIZE, actions: RL.N_ACTIONS });
+}
+
+/** Loads a checkpoint into `net`, migrating it if the inputs or actions have grown since. */
+function initFrom(net, file) {
+  const ck = load(file);
+  const src = new RL.Net(ck.config, ck.params);
+  if (src.size === net.size && ck.config.input === net.config.input && ck.config.actions === net.config.actions && !!ck.config.pointers === !!net.config.pointers) {
+    net.params.set(ck.params);
+  } else {
+    RL.transplant(src, net);
+    console.log(`Migrated ${file} (${ck.config.input} inputs, ${ck.config.actions} actions) to ${net.config.input} inputs, ${net.config.actions} actions${net.config.pointers ? ', pointer heads' : ''}`);
+  }
 }
 
 /** A Net whose weights live in a SharedArrayBuffer visible to the workers. */
@@ -182,10 +199,10 @@ function logLine(file, obj) {
 async function imitation() {
   const out = args.out || 'rl/checkpoints/imitation';
   const target = args.samples || 1500000;
-  const config = { input: RL.OBS_SIZE, hidden: HP.hidden, actions: RL.N_ACTIONS };
+  const config = { input: RL.OBS_SIZE, hidden: HP.hidden, actions: RL.N_ACTIONS, pointers: !!args.pointers };
   const net = sharedNet(config);
-  if (args.init) net.params.set(load(args.init).params);
-  else net.init();
+  net.init();
+  if (args.init) initFrom(net, args.init);
   const adam = new RL.Adam(net.size, { lr: args.lr || 1e-3 });
   const pool = new Pool(HP.workers, net);
   const logFile = out + '.log.jsonl';
@@ -197,7 +214,7 @@ async function imitation() {
   console.log(`Imitation learning: ${net.size.toLocaleString()} parameters, ${HP.workers} workers, target ${target.toLocaleString()} samples`);
   while (seen < target) {
     round++;
-    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: round * 1000 + i, hp: HP }));
+    const res = await pool.each(i => ({ type: 'imitation', games: gamesPerWorker, seed: (args.seed || 0) + round * 1000 + i, hp: HP, dagger: args.dagger || 0 }));
     const batch = concat(res.map(r => r.batch));
     // Decay the learning rate over the run.
     adam.lr = (args.lr || 1e-3) * Math.max(0.1, 1 - seen / target);
@@ -225,7 +242,8 @@ async function ppo() {
   if (!args.init) throw new Error('--init <checkpoint> is required (run imitation first)');
   const out = args.out || 'rl/checkpoints/ppo';
   const init = load(args.init);
-  const net = sharedNet(init.config, init.params);
+  const net = sharedNet(currentConfig(init.config));
+  initFrom(net, args.init);
   const lr = args.lr || 1e-4;
   const adam = new RL.Adam(net.size, { lr, clip: 0.5 });
   const pool = new Pool(HP.workers, net);

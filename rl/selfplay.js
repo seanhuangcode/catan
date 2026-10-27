@@ -37,7 +37,7 @@ class HeuristicAgent {
 
   act(game, me, ctx) {
     const action = C.AI.decide(game, me);
-    if (action.type !== 'offer') this.label(game, me, ctx, RL.fromAction(game, me, action));
+    this.label(game, me, ctx, RL.fromAction(game, me, action));
     return action;
   }
 
@@ -57,9 +57,32 @@ class HeuristicAgent {
   }
 }
 
+/**
+ * DAgger: the learner's policy chooses the moves that are played, while the
+ * heuristic bot records what it would have done in each of those positions.
+ * This teaches the network to recover from its own mistakes.
+ */
+class DaggerAgent {
+  constructor(net, opts = {}) {
+    this.kind = 'policy';
+    this.teacher = new HeuristicAgent({ onStep: opts.onStep });
+    this.student = new RL.PolicyAgent(net, { rng: opts.rng });
+  }
+
+  act(game, me, ctx) {
+    this.teacher.act(game, me, ctx); // records the label only
+    return this.student.act(game, me, ctx);
+  }
+
+  discard(game, me, count, ctx) {
+    this.teacher.discard(game, me, count, ctx);
+    return this.student.discard(game, me, count, ctx);
+  }
+}
+
 function resolveOffer(game, pid, offer) {
-  // Trade responses use the heuristic evaluator for every seat (learned
-  // agents don't make or answer player trades yet).
+  // Every seat answers offers with the heuristic trade evaluator (the
+  // network makes offers but doesn't learn how to answer them yet).
   const accepters = game.players.filter(o => o.id !== pid && C.AI.evaluateTrade(game, o.id, pid, offer.give, offer.get));
   if (accepters.length) game.perform(pid, { type: 'playerTrade', to: accepters[0].id, give: offer.give, get: offer.get });
 }
@@ -90,11 +113,12 @@ function playGame(agents, opts = {}) {
     }
     const pid = game.current;
     const ctx = ctxs[pid];
-    if (ctx.turnSeen !== game.turn) { ctx.turnSeen = game.turn; ctx.mainActions = 0; }
+    RL.syncTurn(ctx, game);
     const wasMain = game.phase === 'main';
     const agent = agents[pid];
     const action = agent.act(game, pid, ctx);
     if (action.type === 'offer') {
+      RL.noteOffer(ctx, RL.fromAction(game, pid, action));
       resolveOffer(game, pid, action);
     } else {
       const res = game.perform(pid, action);
@@ -250,4 +274,4 @@ function mulberry32(seed) {
   };
 }
 
-module.exports = { C, RL, HeuristicAgent, playGame, finalize, pack, concat, accumulateGrads, mulberry32 };
+module.exports = { C, RL, HeuristicAgent, DaggerAgent, playGame, finalize, pack, concat, accumulateGrads, mulberry32 };

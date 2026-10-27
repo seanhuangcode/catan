@@ -17,10 +17,16 @@ Opponents' hidden cards are never included.
 
 **Actions (252).** One flat list covers every kind of move: settlement, road, or city on each spot, robber on each tile, steal from each opponent, discard one card of each resource, roll, end turn, buy or play development cards, and 20 bank trades. A legality mask removes illegal moves, and `tests/rl.test.js` checks that every move the mask allows is accepted by the engine. Multi-card discards are made one card at a time.
 
-**Network.** A multilayer perceptron, 1,808 → 256 → 256, with a policy head (252 action logits) and a value head (predicted outcome). That's about 594,000 parameters. The forward and backward passes and the Adam optimizer are hand-written in `nn.js`. The input is mostly zeros, so the first layer only processes the nonzero entries.
+**Network.** A multilayer perceptron, 1,808 → 256 → 256, with a policy head (252 action logits) and a value head (predicted outcome).
+
+On top of that are **pointer heads**: for each kind of location (settlement spot, city, road, robber tile, steal target), one shared scorer rates every location from that location's own features (and its neighbors'), conditioned on the overall game state. Without them, the network has to learn separately for each of the 54 corners that "high pips = good spot"; with them, what it learns about one corner applies to every corner. Adding pointer heads raised imitation accuracy from about 75% to 84%.
+
+That's about 635,000 parameters in total. The forward and backward passes and the Adam optimizer are hand-written in `nn.js`, and the input is mostly zeros, so the first layer only processes the nonzero entries.
 
 **Training happens in two stages:**
 1. **Imitation** (`train.js imitation`). The hand-written bots play each other, and the network learns to predict their moves (cross-entropy) and the game outcome (value regression). This gives a competent starting policy, which is far faster than learning from random play.
+
+   With `--dagger p`, each seat is instead played by the network with probability *p*, while the hand-written bot labels what it would have done in each of those positions (DAgger). This teaches the network to recover from its own mistakes rather than only seeing positions the bot would reach.
 2. **PPO** (`train.js ppo`). Proximal Policy Optimization (clipped objective, GAE advantages, entropy bonus). Each iteration plays games of three kinds:
    - 50% against the hand-written bots;
    - 30% pure self-play;

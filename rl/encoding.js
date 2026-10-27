@@ -26,6 +26,8 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   const DEV_TYPES = ['knight', 'victoryPoint', 'roadBuilding', 'yearOfPlenty', 'monopoly'];
   // Main-phase actions allowed per turn before only "end turn" stays legal.
   const MAX_MAIN_ACTIONS = 30;
+  // Trade offers to other players allowed per turn.
+  const MAX_OFFERS = 2;
 
   // ------------------------------------------------------------ actions
 
@@ -46,6 +48,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   block('YOP', 15); // Year of Plenty resource pairs
   block('MONO', 5);
   block('BANK', 20); // give (best ratio) of one resource for 1 of another
+  block('OFFER', 20); // offer other players 1 of one resource for 1 of another
   const N_ACTIONS = n;
 
   const YOP_PAIRS = [];
@@ -59,7 +62,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   const VERTEX_F = 22; // settlement by seat (4), city by seat (4), port (6), pips by resource (5), total pips, can settle, can settle ignoring roads
   const EDGE_F = 5; // road by seat (4), can build
   const PLAYER_F = 16;
-  const SELF_F = 44;
+  const SELF_F = 45;
   const O_HEX = 0;
   const O_VERTEX = O_HEX + N_HEX * HEX_F;
   const O_EDGE = O_VERTEX + N_VERTEX * VERTEX_F;
@@ -71,9 +74,27 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
    * Extra per-decision context the engine doesn't track:
    *   discardSel   cards already chosen during a multi-card discard
    *   mainActions  main-phase actions taken so far this turn
+   *   offers       trade offers made so far this turn
+   *   offered      action indices of those offers (an offer isn't repeated in a turn)
+   *   turnSeen     turn these counters belong to (reset them when it changes)
    */
   function newContext() {
-    return { discardSel: null, mainActions: 0, turnSeen: -1 };
+    return { discardSel: null, mainActions: 0, offers: 0, offered: [], turnSeen: -1 };
+  }
+
+  /** Resets the per-turn counters in `ctx` when the game has moved to a new turn. */
+  function syncTurn(ctx, game) {
+    if (ctx.turnSeen === game.turn) return;
+    ctx.turnSeen = game.turn;
+    ctx.mainActions = 0;
+    ctx.offers = 0;
+    ctx.offered = [];
+  }
+
+  /** Records that the offer with action index `a` was made this turn. */
+  function noteOffer(ctx, a) {
+    ctx.offers = (ctx.offers || 0) + 1;
+    (ctx.offered || (ctx.offered = [])).push(a);
   }
 
   const rel = (game, me, pid) => (pid - me + game.players.length) % game.players.length;
@@ -199,6 +220,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     out[o++] = nP === 3 ? 1 : 0;
     out[o++] = game.dice ? (game.dice[0] + game.dice[1]) / 12 : 0;
     out[o++] = game.vpToWin / 10;
+    out[o++] = ctx ? Math.min(ctx.offers || 0, MAX_OFFERS) / MAX_OFFERS : 0;
     return out;
   }
 
@@ -269,6 +291,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         devMask(game, me, mask);
         BANK_PAIRS.forEach(([g, s], i) => {
           if (hand[g] >= game.tradeRatio(me, g) && game.bank[s] > 0) mask[A.BANK + i] = 1;
+          if (hand[g] >= 1 && (!ctx || ((ctx.offers || 0) < MAX_OFFERS && !(ctx.offered || []).includes(A.OFFER + i)))) mask[A.OFFER + i] = 1;
         });
         break;
       }
@@ -301,8 +324,13 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     if (a === A.ROAD_BUILDING) return { type: 'playRoadBuilding' };
     if (a < A.MONO) return { type: 'playYearOfPlenty', resources: YOP_PAIRS[a - A.YOP].slice() };
     if (a < A.BANK) return { type: 'playMonopoly', resource: R[a - A.MONO] };
-    const [g, s] = BANK_PAIRS[a - A.BANK];
-    return { type: 'bankTrade', give: { [g]: game.tradeRatio(me, g) }, get: { [s]: 1 } };
+    if (a < A.OFFER) {
+      const [g, s] = BANK_PAIRS[a - A.BANK];
+      return { type: 'bankTrade', give: { [g]: game.tradeRatio(me, g) }, get: { [s]: 1 } };
+    }
+    // Not a Game#perform action: whoever runs the game asks the other players.
+    const [g, s] = BANK_PAIRS[a - A.OFFER];
+    return { type: 'offer', give: { [g]: 1 }, get: { [s]: 1 } };
   }
 
   /**
@@ -337,8 +365,69 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         if (action.give[gives[0]] !== game.tradeRatio(me, gives[0])) return -1;
         return A.BANK + BANK_PAIRS.findIndex(([g, s]) => g === gives[0] && s === gets[0]);
       }
+      case 'offer': {
+        const gives = R.filter(r => action.give[r]);
+        const gets = R.filter(r => action.get[r]);
+        if (gives.length !== 1 || gets.length !== 1 || action.give[gives[0]] !== 1 || action.get[gets[0]] !== 1) return -1;
+        return A.OFFER + BANK_PAIRS.findIndex(([g, s]) => g === gives[0] && s === gets[0]);
+      }
       default: return -1;
     }
+  }
+
+  /**
+   * Location features for the network's pointer heads (see Net in nn.js).
+   * For each kind of location action, every action gets a small feature
+   * vector gathered from the observation: its own features plus nearby
+   * ones. One shared scorer then rates every location of that kind, so
+   * what it learns about one corner carries over to all corners.
+   * Each group: {start, count, F, offsets, slots, obs}; action i of the group
+   * has feature[slots[k]] += obs[obs[k]] for k in offsets[i]..offsets[i+1].
+   */
+  let groupCache = null;
+  function pointerGroups() {
+    if (groupCache) return groupCache;
+    const geo = C.boardGeometry();
+    const vtx = (v, base, list) => { for (let k = 0; k < VERTEX_F; k++) list.push([base + k, O_VERTEX + v * VERTEX_F + k]); };
+    const make = (start, count, F, build) => {
+      const offsets = new Int32Array(count + 1);
+      const slots = [];
+      const obs = [];
+      for (let i = 0; i < count; i++) {
+        offsets[i] = slots.length;
+        const list = [];
+        build(i, list);
+        for (const [s, o] of list) { slots.push(s); obs.push(o); }
+      }
+      offsets[count] = slots.length;
+      return { start, count, F, offsets, slots: Int32Array.from(slots), obs: Int32Array.from(obs) };
+    };
+    groupCache = [
+      // Settlement spot: its own features + the sum of its neighbors'.
+      make(A.SETTLE, N_VERTEX, 2 * VERTEX_F, (v, l) => {
+        vtx(v, 0, l);
+        for (const n of geo.vertices[v].adj) vtx(n, VERTEX_F, l);
+      }),
+      make(A.CITY, N_VERTEX, VERTEX_F, (v, l) => vtx(v, 0, l)),
+      // Road: edge features + both endpoints + the endpoints' neighbors.
+      make(A.ROAD, N_EDGE, EDGE_F + 2 * VERTEX_F, (e, l) => {
+        for (let k = 0; k < EDGE_F; k++) l.push([k, O_EDGE + e * EDGE_F + k]);
+        for (const v of geo.edges[e].v) {
+          vtx(v, EDGE_F, l);
+          for (const n of geo.vertices[v].adj) vtx(n, EDGE_F + VERTEX_F, l);
+        }
+      }),
+      // Robber tile: tile features + everything on its six corners.
+      make(A.ROBBER, N_HEX, HEX_F + VERTEX_F, (h, l) => {
+        for (let k = 0; k < HEX_F; k++) l.push([k, O_HEX + h * HEX_F + k]);
+        for (const v of geo.hexes[h].vertices) vtx(v, HEX_F, l);
+      }),
+      // Steal target: that opponent's public stats.
+      make(A.STEAL, MAX_SEATS - 1, PLAYER_F, (i, l) => {
+        for (let k = 0; k < PLAYER_F; k++) l.push([k, O_PLAYER + (i + 1) * PLAYER_F + k]);
+      }),
+    ];
+    return groupCache;
   }
 
   function describe(a) {
@@ -349,7 +438,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   }
 
   C.RL = Object.assign(C.RL || {}, {
-    A, N_ACTIONS, OBS_SIZE, PHASES, YOP_PAIRS, BANK_PAIRS, MAX_MAIN_ACTIONS,
-    newContext, actor, encode, sparsify, legalMask, toAction, fromAction, describe,
+    A, N_ACTIONS, OBS_SIZE, PHASES, YOP_PAIRS, BANK_PAIRS, MAX_MAIN_ACTIONS, MAX_OFFERS,
+    newContext, syncTurn, noteOffer, actor, encode, sparsify, legalMask, toAction, fromAction, describe, pointerGroups,
   });
 })(Catan);

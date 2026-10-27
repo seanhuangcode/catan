@@ -231,13 +231,15 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
    * Chooses the next move for snap.me with a PolicyAgent (or anything with the
    * same choose/chooseDiscard methods). Returns a site-independent move:
    *   {kind, vertex?, edge?, hex?, victim?, resources?, resource?, give?, get?, cards?}
+   * kind 'offer' means: offer the other players `give` for `get`, and take the
+   * trade if someone accepts.
    * plus `action` (the policy's action index) for logging.
    */
   function decide(snap, agent, ctx) {
     const game = buildGame(snap);
     const me = snap.me;
     ctx = ctx || C.RL.newContext();
-    if (ctx.turnSeen !== game.turn) { ctx.turnSeen = game.turn; ctx.mainActions = 0; }
+    C.RL.syncTurn(ctx, game);
     if (snap.phase === 'discard') {
       const cards = agent.chooseDiscard(game, me, snap.discardCount, ctx);
       return { kind: 'discard', cards };
@@ -263,6 +265,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       case 'playYearOfPlenty': return Object.assign(move, { kind: 'playYearOfPlenty', resources: act.resources });
       case 'playMonopoly': return Object.assign(move, { kind: 'playMonopoly', resource: act.resource });
       case 'bankTrade': return Object.assign(move, { kind: 'bankTrade', give: act.give, get: act.get });
+      case 'offer':
+        C.RL.noteOffer(ctx, a);
+        return Object.assign(move, { kind: 'offer', give: act.give, get: act.get });
       default: throw new Error('Unhandled action ' + act.type);
     }
   }
@@ -287,6 +292,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       case 'playMonopoly': return { type: 'playMonopoly', resource: move.resource };
       case 'bankTrade': return { type: 'bankTrade', give: move.give, get: move.get };
       case 'discard': return { type: 'discard', cards: move.cards };
+      case 'offer': return { type: 'offer', give: move.give, get: move.get };
       default: throw new Error('Unknown move ' + move.kind);
     }
   }
