@@ -13,3 +13,5 @@ rl/checkpoints/*.json
 !rl/checkpoints/imitation-dagger.json
 !rl/checkpoints/ppo.bin
 !rl/checkpoints/ppo.json
+!rl/checkpoints/ppo2.bin
+!rl/checkpoints/ppo2.json
