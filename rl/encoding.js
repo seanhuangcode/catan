@@ -50,6 +50,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   block('BANK', 20); // give (best ratio) of one resource for 1 of another
   block('OFFER', 20); // offer other players 1 of one resource for 1 of another
   block('RESPOND', 2); // answer another player's offer: accept, decline
+  block('OFFER2', 20); // offer other players 2 of one resource for 1 of another
   const N_ACTIONS = n;
 
   const YOP_PAIRS = [];
@@ -324,7 +325,10 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
         devMask(game, me, mask);
         BANK_PAIRS.forEach(([g, s], i) => {
           if (hand[g] >= game.tradeRatio(me, g) && game.bank[s] > 0) mask[A.BANK + i] = 1;
-          if (hand[g] >= 1 && (!ctx || ((ctx.offers || 0) < MAX_OFFERS && !(ctx.offered || []).includes(A.OFFER + i)))) mask[A.OFFER + i] = 1;
+          const canOffer = !ctx || (ctx.offers || 0) < MAX_OFFERS;
+          const fresh = a => !ctx || !(ctx.offered || []).includes(a);
+          if (canOffer && hand[g] >= 1 && fresh(A.OFFER + i)) mask[A.OFFER + i] = 1;
+          if (canOffer && hand[g] >= 2 && fresh(A.OFFER2 + i)) mask[A.OFFER2 + i] = 1;
         });
         break;
       }
@@ -361,10 +365,11 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       const [g, s] = BANK_PAIRS[a - A.BANK];
       return { type: 'bankTrade', give: { [g]: game.tradeRatio(me, g) }, get: { [s]: 1 } };
     }
-    if (a >= A.RESPOND) return { type: 'respond', accept: a === A.RESPOND };
+    if (a >= A.RESPOND && a < A.OFFER2) return { type: 'respond', accept: a === A.RESPOND };
     // Not a Game#perform action: whoever runs the game asks the other players.
-    const [g, s] = BANK_PAIRS[a - A.OFFER];
-    return { type: 'offer', give: { [g]: 1 }, get: { [s]: 1 } };
+    const two = a >= A.OFFER2;
+    const [g, s] = BANK_PAIRS[a - (two ? A.OFFER2 : A.OFFER)];
+    return { type: 'offer', give: { [g]: two ? 2 : 1 }, get: { [s]: 1 } };
   }
 
   /**
@@ -403,8 +408,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
       case 'offer': {
         const gives = R.filter(r => action.give[r]);
         const gets = R.filter(r => action.get[r]);
-        if (gives.length !== 1 || gets.length !== 1 || action.give[gives[0]] !== 1 || action.get[gets[0]] !== 1) return -1;
-        return A.OFFER + BANK_PAIRS.findIndex(([g, s]) => g === gives[0] && s === gets[0]);
+        const n = action.give[gives[0]];
+        if (gives.length !== 1 || gets.length !== 1 || (n !== 1 && n !== 2) || action.get[gets[0]] !== 1) return -1;
+        return (n === 2 ? A.OFFER2 : A.OFFER) + BANK_PAIRS.findIndex(([g, s]) => g === gives[0] && s === gets[0]);
       }
       default: return -1;
     }

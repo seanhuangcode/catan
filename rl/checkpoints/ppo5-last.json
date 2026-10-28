@@ -1,0 +1,38 @@
+{
+  "config": {
+    "input": 1838,
+    "hidden": [
+      256,
+      256
+    ],
+    "actions": 294,
+    "pointers": true
+  },
+  "kind": "ppo",
+  "iter": 40,
+  "eval": {
+    "games": 1001,
+    "wins": 336,
+    "vp": 8004,
+    "turns": 68864,
+    "capped": 0,
+    "winRate": 0.3356643356643357,
+    "ci": 0.02925401073903902,
+    "avgVp": 7.996003996003996,
+    "avgTurns": 68.7952047952048
+  },
+  "hp": {
+    "hidden": [
+      256,
+      256
+    ],
+    "workers": 11,
+    "gamma": 0.997,
+    "lambda": 0.95,
+    "shaping": 1,
+    "clip": 0.2,
+    "entropy": 0.003,
+    "valueCoef": 0.5,
+    "maxTurns": 300
+  }
+}

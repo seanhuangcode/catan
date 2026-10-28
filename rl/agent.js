@@ -86,8 +86,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
 
     /** Answers player `from`'s offer to give us `offer.give` for `offer.get`. */
     respond(game, me, from, offer, ctx) {
-      // Models trained before accept/decline existed answer like the classic bot.
-      if (this.net.config.actions <= RL.A.RESPOND) return C.AI.evaluateTrade(game, me, from, offer.give, offer.get);
+      // Unless a model was trained to answer offers itself (config.respond),
+      // it answers like the classic bot, which plays better (see rl/README.md).
+      if (!this.net.config.respond || this.net.config.actions <= RL.A.RESPOND) return C.AI.evaluateTrade(game, me, from, offer.give, offer.get);
       ctx.respondTo = { from, give: offer.give, get: offer.get };
       const a = this.choose(game, me, ctx);
       ctx.respondTo = null;
