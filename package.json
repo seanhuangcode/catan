@@ -4,7 +4,7 @@
   "description": "A browser Catan game modeled on colonist.io, with bot opponents.",
   "private": true,
   "scripts": {
-    "test": "node tests/simulate.js && node tests/rl.test.js && node tests/bridge.test.js",
+    "test": "node tests/simulate.js && node tests/rl.test.js && node tests/bridge.test.js && node tests/colonist.test.js",
     "start": "python3 -m http.server 8000",
     "train:imitation": "node rl/train.js imitation",
     "train:ppo": "node rl/train.js ppo --init rl/checkpoints/ppo3 --games 48 --lr 0.0001",
@@ -13,10 +13,11 @@
     "test:e2e": "node tests/autopilot.e2e.js",
     "autopilot": "node bridge/autopilot.js --headed --start-game",
     "record-colonist": "node bridge/record-colonist.js",
-    "calibrate-colonist": "node bridge/record-colonist.js --calibrate",
+    "calibrate-colonist": "node bridge/record-colonist.js --calibrate --connect",
     "setup-browser": "npx playwright install chromium",
     "open-chrome": "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"$HOME/colonist-chrome\" https://colonist.io/",
-    "record-colonist-chrome": "node bridge/record-colonist.js --connect"
+    "record-colonist-chrome": "node bridge/record-colonist.js --connect",
+    "autopilot-colonist": "node bridge/autopilot.js --profile colonist --connect"
   },
   "author": "Sean Huang",
   "license": "MIT",

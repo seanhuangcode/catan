@@ -43,6 +43,7 @@
  *   bank                   resource cards left in the bank (optional; estimated if missing)
  *   devDeckCount           development cards left (optional; estimated if missing)
  *   longestRoad / largestArmy   seat holding the award, or null
+ *   friendlyRobber         optional; true if the robber can't target players with <= 2 points
  */
 var Catan = globalThis.Catan || (globalThis.Catan = {});
 
@@ -228,6 +229,7 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     game.discardPending = snap.phase === 'discard' && snap.discardCount ? { [snap.me]: snap.discardCount } : {};
     game.stealCandidates = (snap.stealFrom || []).slice();
     game.freeRoads = snap.freeRoads || 0;
+    game.friendlyRobber = !!snap.friendlyRobber;
     game.afterRobber = 'main';
     game.afterRoadBuilding = 'main';
     return game;

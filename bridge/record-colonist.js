@@ -6,6 +6,7 @@
  *
  *   node bridge/record-colonist.js              record a session in a browser it opens
  *   node bridge/record-colonist.js --calibrate  measure the board position for the autopilot
+ *                                               (add --connect to measure it in your own Chrome)
  *   node bridge/record-colonist.js --connect    record from your own Google Chrome instead
  *
  * --connect attaches to a Chrome you started with remote debugging on port
@@ -199,18 +200,12 @@ async function runCalibration() {
       hexSize: +(dist / Math.sqrt(3)).toFixed(2), // center-to-center distance = sqrt(3) * hex radius
       rotation: +((Math.atan2(dy, dx) * 180) / Math.PI).toFixed(2),
     },
-    controls: {},
   };
+  // Buttons are found by their ids, so only the board needs measuring.
   const file = path.join(__dirname, 'profiles', 'colonist.calibration.json');
-  if (fs.existsSync(file)) cal.controls = JSON.parse(fs.readFileSync(file, 'utf8')).controls || {};
-  for (const name of ['roll', 'endTurn', 'buildRoad', 'buildSettlement', 'buildCity', 'buyDevCard', 'trade']) {
-    queue.length = 0;
-    await ask(`Click the "${name}" button in the game (it's fine if it does something), then press Enter. Press Enter alone to skip. `);
-    const hit = queue[queue.length - 1];
-    if (hit) cal.controls[name] = { x: hit.x, y: hit.y, seen: hit.path };
-  }
   fs.writeFileSync(file, JSON.stringify(cal, null, 2) + '\n');
   console.log(`Saved ${path.relative(process.cwd(), file)}:`, JSON.stringify(cal.board));
+  console.log("Don't resize or zoom the window afterwards; if you do, calibrate again.");
   rl.close();
   await close();
 }

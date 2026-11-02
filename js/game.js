@@ -578,16 +578,15 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     canMoveRobberTo(pid, hex) {
       if (hex === this.robber || !this.hexes[hex]) return false;
       if (!this.friendlyRobber) return true;
-      const protectedHere = this.hexes[hex].vertices.some(vid => {
+      // Friendly robber (as on colonist.io): no tile next to anyone with 2 or
+      // fewer public points, including the player moving the robber.
+      const isProtected = h => h.vertices.some(vid => {
         const b = this.vertices[vid].building;
-        return b && b.player !== pid && this.victoryPoints(b.player, false) <= 2;
+        return b && this.victoryPoints(b.player, false) <= 2;
       });
-      if (!protectedHere) return true;
+      if (!isProtected(this.hexes[hex])) return true;
       // If every tile is protected, the robber may go anywhere.
-      return !this.hexes.some(h => h.id !== this.robber && !h.vertices.some(vid => {
-        const b = this.vertices[vid].building;
-        return b && b.player !== pid && this.victoryPoints(b.player, false) <= 2;
-      }));
+      return !this.hexes.some(h => h.id !== this.robber && !isProtected(h));
     }
 
     validRobberHexes(pid) {

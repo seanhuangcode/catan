@@ -4,6 +4,7 @@
  *
  *   node bridge/autopilot.js [--profile replica] [--url URL] [--headed]
  *                            [--advise | --auto] [--model models/catan-policy.js]
+ *                            [--connect]   use your own Chrome (see `npm run open-chrome`)
  *
  * Each loop it reads the board into a snapshot (bridge/snapshot.js), asks the
  * trained policy for a move, and carries the move out with mouse clicks via
@@ -55,13 +56,27 @@ async function run(opts) {
   if (profile.notice) log(profile.notice);
   log(`Autopilot: profile ${profile.name}, ${auto ? 'clicking moves automatically' : 'advice only (you click)'}`);
 
-  const browser = opts.browser || await chromium.launch({ headless: !opts.headed });
-  const page = opts.page || await browser.newPage({ viewport: { width: 1400, height: 860 } });
-  if (!opts.page) await page.goto(opts.url || profile.defaultUrl);
+  let browser = opts.browser;
+  let page = opts.page;
+  if (!page && opts.connect) {
+    // Attach to a Chrome the user started with remote debugging, and use its tab.
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.port || 9222}`);
+    const pages = browser.contexts()[0].pages();
+    page = pages.find(p => p.url().includes(new URL(profile.defaultUrl).hostname)) || pages[0];
+    log(`Attached to your Chrome tab: ${page.url()}`);
+  }
+  if (!page) {
+    browser = browser || await chromium.launch({ headless: !opts.headed });
+    page = await browser.newPage({ viewport: { width: 1400, height: 860 } });
+    await page.goto(opts.url || profile.defaultUrl);
+  }
   if (profile.prepare) await profile.prepare(page);
   if (opts.start && profile.startGame) await profile.startGame(page, opts.start);
 
   const ctx = RL.newContext();
+  // Moves this site's profile can't carry out yet are never chosen.
+  if (profile.disallow) ctx.disallow = profile.disallow;
+  let waitingOnYou = null;
   let lastAdvice = null;
   let stuck = 0;
   const stats = { moves: 0, retries: 0 };
@@ -75,9 +90,10 @@ async function run(opts) {
       break;
     }
     if (auto && profile.handlePrompt && await profile.handlePrompt(page, snap, new Driver(page, await profile.transform(page)))) continue;
-    if (!C.Bridge.needsDecision(snap)) { await sleep(150); continue; }
+    if (snap.busy || !C.Bridge.needsDecision(snap)) { await sleep(150); continue; }
 
     const key = stateKey(snap);
+    if (waitingOnYou === key) { await sleep(300); continue; } // the player is doing this move
     const move = C.Bridge.decide(snap, agent, ctx);
     if (!auto) {
       if (key !== lastAdvice) {
@@ -95,7 +111,10 @@ async function run(opts) {
     try {
       await profile.performMove(move, driver);
     } catch (e) {
-      log(`  could not perform move: ${e.message}`);
+      // Hand the move over rather than getting stuck: tell the player what to do.
+      log(`  I can't click this one (${e.message}).\n  Please do it yourself: ${describe(move)}`);
+      waitingOnYou = key;
+      continue;
     }
     stats.moves++;
 
@@ -114,7 +133,7 @@ async function run(opts) {
   }
 
   const final = await profile.readSnapshot(page);
-  if (!opts.page) await browser.close();
+  if (!opts.page && !opts.connect) await browser.close();
   return { final, stats };
 }
 
@@ -129,6 +148,9 @@ if (require.main === module) {
     advise: !!args.advise,
     auto: !!args.auto,
     model: args.model,
+    connect: !!args.connect,
+    port: args.port ? Number(args.port) : undefined,
+    timeoutMs: args.minutes ? Number(args.minutes) * 60000 : undefined,
     start: args['start-game'] ? { speed: 'fast', brain: 'classic' } : null,
   }).catch(e => {
     console.error(e.message);

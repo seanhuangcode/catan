@@ -35,31 +35,42 @@ node bridge/autopilot.js --advise --headed   # only shows suggestions, you click
 
 ## colonist.io
 
-**Status: partly done.** This was built in an environment that couldn't reach colonist.io, so nothing here has been run against the real site yet. Here's what exists:
+**Reading the game: done and tested.** `colonist-state.js` follows colonist's WebSocket messages: one full game state at the start (type 4), then diffs (type 91). It turns them into snapshots. `tests/colonist.test.js` replays a real recorded game (`tests/fixtures/colonist-game.jsonl.gz`, cleaned of tokens) and checks:
+- at every decision, our engine's legal moves exactly equal the spots colonist highlighted;
+- every move made was legal for us;
+- every player's points match colonist's own count after every update (1,368 checks).
 
-- **Board clicks.** These work from a calibration that `node bridge/record-colonist.js --calibrate` measures. You click the center tile and its right-hand neighbor, then the main buttons.
-- **Moves.** Board placements, roll, end turn, build buttons and buying development cards go through the calibration. Dialog-based moves (discarding, stealing, playing development cards, bank trades) still need colonist.io's selectors.
-- **Reading the game state** (`readSnapshot` in `profiles/colonist.js`) **is not written yet.** That's the main missing piece.
+This found and fixed one real rule difference: colonist's friendly robber also protects your *own* tiles while you have 2 or fewer points.
 
-### Finishing colonist.io support
+**Clicking: written, not yet tried on the live site.**
+- Buttons are clicked by id (`#roll-dice-button`, `#action-button-build-city`, …) or icon.
+- Cards are clicked by their card code (`[data-card-enum]`).
+- Card pickers (Year of Plenty, Monopoly, discards) use the confirm button.
+- The board is a canvas, so it's clicked by position from the calibration. During setup colonist reports which spot is under the mouse; the autopilot checks that before clicking and fine-tunes the calibration from it.
+- Trades and choosing between several players to rob aren't automated yet. The network never picks trades on colonist. When a move can't be clicked, the autopilot tells you what to do and waits for you.
 
-1. On your own computer, record one game:
-   ```bash
-   npm install
-   npm run setup-browser      # downloads the browser Playwright drives (once)
-   npm run record-colonist    # opens colonist.io; play a game against bots, then Ctrl+C here
-   ```
-   Play as a **guest** (don't log in), so the recording contains no account details.
+### Playing a game with it
 
-   If colonist.io's buttons don't respond in the browser the recorder opens, record from your own Google Chrome instead (macOS):
-   ```bash
-   npm run open-chrome              # opens Chrome with a separate profile, ready to be recorded
-   npm run record-colonist-chrome   # in a second terminal: attaches to that Chrome
-   ```
-   Then reload the colonist tab (or start the game after attaching), play, and press Ctrl+C in the recorder's terminal. Chrome stays open. It saves every network message, your clicks (with the element under the pointer), and periodic screenshots to `bridge/recordings/`.
-2. Colonist.io sends game state over a WebSocket. Use the recording to write `readSnapshot()`. It should keep a running copy of the game from those messages, convert colonist's tile and corner numbering to the `[q, r, corner]` coordinates above, and return a snapshot. The recorded screenshots show what the true state was at each moment, so you can check the reader against them.
-3. Fill in the remaining dialog moves in `performMove()` using the selectors in `clicks.jsonl`.
-4. Test in advice mode first (`--profile colonist`, the default for colonist): it draws a ring on the suggested spot. Switch to `--auto` only once the suggestions consistently line up.
+Use colonist.io's **computer opponents** (or friends who agree). On a Mac:
+```bash
+npm run open-chrome            # Chrome on colonist.io, ready for the autopilot
+npm run calibrate-colonist     # once: start a game, click the middle tile, then its right neighbor
+npm run autopilot-colonist     # advice only: shows the suggested move on the board
+npm run autopilot-colonist -- --auto   # clicks the moves itself
+```
+Reload the colonist tab after the autopilot starts, so it sees the game connection open. Don't resize the window after calibrating.
+
+### Message codes (from the recorded game)
+
+| | |
+| --- | --- |
+| resources / cards | 1 wood, 2 brick, 3 sheep, 4 wheat, 5 ore; 11 knight, 12 VP, 13 monopoly, 14 road building, 15 year of plenty; 0 / 10 hidden |
+| tiles | type 0 desert, 1–5 as above; (x, y) is the same axial (q, r) as snapshots |
+| corners (x, y, z) | z 0 top / z 1 bottom corner of tile (x, y) |
+| edges (x, y, z) | z 0 upper-left, 1 left, 2 lower-left side of tile (x, y) |
+| harbors | type 1 = 3:1, 2–6 = 2:1 for resource type − 1 |
+| turnState / actionState | 0 setup, 1 before the roll, 2 after; actionState 1/3 setup settlement/road, 4/6/7 road/settlement/city spot, 24 robber, 27 pick victim, 28 discard, 30/31 free roads, 32 pick cards |
+| messages | 30/31/33 legal corners/edges/tiles, 43 cards changing hands, 18 card picker, 45 game over |
 
 ### Fair play
 

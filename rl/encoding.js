@@ -32,8 +32,9 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
   // ------------------------------------------------------------ actions
 
   const A = {};
+  const SIZE = {};
   let n = 0;
-  const block = (name, size) => { A[name] = n; n += size; };
+  const block = (name, size) => { A[name] = n; SIZE[name] = size; n += size; };
   block('SETTLE', N_VERTEX); // setup or regular settlement on a vertex
   block('ROAD', N_EDGE); // setup, regular or free road on an edge
   block('CITY', N_VERTEX);
@@ -86,6 +87,8 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
    *   offers       trade offers made so far this turn
    *   offered      action indices of those offers (an offer isn't repeated in a turn)
    *   respondTo    {from, give, get} while answering someone's offer (give = what they give me)
+   *   disallow     optional list of action blocks to rule out, e.g. ['BANK', 'OFFER'] for a
+   *                front end that can't carry those moves out yet
    *   turnSeen     turn these counters belong to (reset them when it changes)
    */
   function newContext() {
@@ -279,8 +282,16 @@ var Catan = globalThis.Catan || (globalThis.Catan = {});
     if (playableDev(game, p, 'monopoly')) for (let i = 0; i < 5; i++) mask[A.MONO + i] = 1;
   }
 
-  /** Legal action mask for the acting player. */
+  /** Legal action mask for the acting player (minus any blocks in ctx.disallow). */
   function legalMask(game, me, ctx, mask) {
+    mask = rawMask(game, me, ctx, mask);
+    if (ctx && ctx.disallow) {
+      for (const name of ctx.disallow) mask.fill(0, A[name], A[name] + SIZE[name]);
+    }
+    return mask;
+  }
+
+  function rawMask(game, me, ctx, mask) {
     mask = mask || new Uint8Array(N_ACTIONS);
     mask.fill(0);
     const p = game.players[me];
