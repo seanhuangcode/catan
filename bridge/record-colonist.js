@@ -8,10 +8,12 @@
  *   node bridge/record-colonist.js --calibrate  measure the board position for the autopilot
  *
  * A recording (bridge/recordings/<time>/) contains:
- *   frames.jsonl     every WebSocket message sent and received, with timestamps
+ *   frames.jsonl.gz  every WebSocket message sent and received, with timestamps
  *   clicks.jsonl     your clicks: position plus the element under the pointer
- *   screens/*.png    a screenshot every few seconds and after clicks
- *   page.html        the page's HTML when you stop
+ *   screens/*.jpg    a screenshot every few seconds and after clicks
+ *   dom/*.html.gz    the page's HTML (every frame) once a minute and when you stop
+ * Screenshots are small JPEGs and the rest is compressed, so a full game
+ * stays well under GitHub's 100 MB per-file limit.
  * It records only your own browser session. Your login stays in
  * bridge/.colonist-browser so you don't have to sign in every time; delete that
  * folder to sign out.
@@ -21,16 +23,24 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const zlib = require('zlib');
 const { chromium } = require('playwright');
 
 const args = process.argv.slice(2);
 const calibrate = args.includes('--calibrate');
-const URL = 'https://colonist.io/';
+// --url and --headless exist for testing the recorder against another page.
+const urlArg = args.indexOf('--url');
+const URL = urlArg >= 0 ? args[urlArg + 1] : 'https://colonist.io/';
+const HEADLESS = args.includes('--headless');
 
 async function openBrowser() {
   const ctx = await chromium.launchPersistentContext(path.join(__dirname, '.colonist-browser'), {
-    headless: false,
-    viewport: null,
+    headless: HEADLESS,
+    viewport: HEADLESS ? { width: 1400, height: 900 } : null,
+    // We close the browser ourselves on Ctrl+C, after saving everything.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
     args: ['--start-maximized'],
   });
   const page = ctx.pages()[0] || await ctx.newPage();
@@ -65,7 +75,10 @@ async function captureClicks(page, onClick) {
 async function record() {
   const dir = path.join(__dirname, 'recordings', new Date().toISOString().replace(/[:.]/g, '-'));
   fs.mkdirSync(path.join(dir, 'screens'), { recursive: true });
-  const frames = fs.createWriteStream(path.join(dir, 'frames.jsonl'));
+  fs.mkdirSync(path.join(dir, 'dom'), { recursive: true });
+  const framesFile = fs.createWriteStream(path.join(dir, 'frames.jsonl.gz'));
+  const frames = zlib.createGzip();
+  frames.pipe(framesFile);
   const clicks = fs.createWriteStream(path.join(dir, 'clicks.jsonl'));
   const { ctx, page } = await openBrowser();
   let nFrames = 0;
@@ -83,7 +96,18 @@ async function record() {
   page.on('websocket', onSocket);
 
   const shot = async () => {
-    try { await page.screenshot({ path: path.join(dir, 'screens', String(nShots++).padStart(5, '0') + '.png') }); } catch (e) { /* page busy */ }
+    const file = path.join(dir, 'screens', String(nShots++).padStart(5, '0') + '.jpg');
+    try { await page.screenshot({ path: file, type: 'jpeg', quality: 60, scale: 'css' }); } catch (e) { /* page busy */ }
+  };
+  let nDom = 0;
+  const saveDom = async () => {
+    try {
+      const parts = [];
+      for (const f of page.frames()) {
+        parts.push(`<!-- frame: ${f.url()} -->\n` + await f.content());
+      }
+      fs.writeFileSync(path.join(dir, 'dom', String(nDom++).padStart(4, '0') + '.html.gz'), zlib.gzipSync(parts.join('\n')));
+    } catch (e) { /* navigating */ }
   };
   let lastClickShot = 0;
   await captureClicks(page, info => {
@@ -91,15 +115,28 @@ async function record() {
     if (Date.now() - lastClickShot > 800) { lastClickShot = Date.now(); setTimeout(shot, 400); }
   });
   await page.goto(URL);
-  const timer = setInterval(shot, 4000);
+  if (process.env.CATAN_RECORDER_SELFTEST) {
+    // Test hook: real mouse clicks, to check that clicks get recorded.
+    await page.mouse.click(300, 300);
+    await page.mouse.click(700, 450);
+  }
+  const timer = setInterval(shot, 5000);
+  const domTimer = setInterval(saveDom, 60000);
   console.log(`Recording to ${path.relative(process.cwd(), dir)}`);
   console.log('Play a game in the browser window (a game against computer opponents is ideal). Press Ctrl+C to stop.');
 
+  let stopping = false;
   const stop = async () => {
+    if (stopping) return;
+    stopping = true;
     clearInterval(timer);
-    try { fs.writeFileSync(path.join(dir, 'page.html'), await page.content()); } catch (e) { /* closed */ }
-    frames.end();
-    clicks.end();
+    clearInterval(domTimer);
+    await saveDom();
+    // Wait until everything is written to disk before exiting.
+    await Promise.all([
+      new Promise(res => { framesFile.on('finish', res); frames.end(); }),
+      new Promise(res => clicks.end(res)),
+    ]);
     console.log(`\nSaved ${nFrames} messages and ${nShots} screenshots to ${path.relative(process.cwd(), dir)}`);
     await ctx.close().catch(() => {});
     process.exit(0);
@@ -110,6 +147,7 @@ async function record() {
 
 async function runCalibration() {
   const { ctx, page } = await openBrowser();
+  process.on('SIGINT', () => ctx.close().finally(() => process.exit(0)));
   const queue = [];
   let waiting = null;
   await captureClicks(page, info => {
