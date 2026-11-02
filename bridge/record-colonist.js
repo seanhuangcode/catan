@@ -4,8 +4,15 @@
  * can be written from real data. Run it on your own computer (it opens a
  * visible browser), play a game normally, then press Ctrl+C.
  *
- *   node bridge/record-colonist.js              record a session
+ *   node bridge/record-colonist.js              record a session in a browser it opens
  *   node bridge/record-colonist.js --calibrate  measure the board position for the autopilot
+ *   node bridge/record-colonist.js --connect    record from your own Google Chrome instead
+ *
+ * --connect attaches to a Chrome you started with remote debugging on port
+ * 9222 (`npm run open-chrome` on a Mac). Use it if a site doesn't work in the
+ * browser Playwright opens. Start the recorder BEFORE starting the game, or
+ * reload the colonist tab after it attaches: only connections opened while it
+ * is attached get recorded.
  *
  * A recording (bridge/recordings/<time>/) contains:
  *   frames.jsonl.gz  every WebSocket message sent and received, with timestamps
@@ -32,8 +39,25 @@ const calibrate = args.includes('--calibrate');
 const urlArg = args.indexOf('--url');
 const URL = urlArg >= 0 ? args[urlArg + 1] : 'https://colonist.io/';
 const HEADLESS = args.includes('--headless');
+const CONNECT = args.includes('--connect');
+const portArg = args.indexOf('--port');
+const PORT = portArg >= 0 ? Number(args[portArg + 1]) : 9222;
 
 async function openBrowser() {
+  if (CONNECT) {
+    let browser;
+    try {
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+    } catch (e) {
+      console.error(`Could not reach Chrome on port ${PORT}. Start it first with: npm run open-chrome\n(${e.message.split('\n')[0]})`);
+      process.exit(1);
+    }
+    const ctx = browser.contexts()[0];
+    const pages = ctx.pages();
+    const page = pages.find(p => p.url().includes('colonist')) || pages[0] || await ctx.newPage();
+    // Closing only disconnects; your Chrome stays open.
+    return { ctx, page, close: () => browser.close() };
+  }
   const ctx = await chromium.launchPersistentContext(path.join(__dirname, '.colonist-browser'), {
     headless: HEADLESS,
     viewport: HEADLESS ? { width: 1400, height: 900 } : null,
@@ -44,7 +68,7 @@ async function openBrowser() {
     args: ['--start-maximized'],
   });
   const page = ctx.pages()[0] || await ctx.newPage();
-  return { ctx, page };
+  return { ctx, page, close: () => ctx.close() };
 }
 
 async function captureClicks(page, onClick) {
@@ -74,13 +98,14 @@ async function captureClicks(page, onClick) {
 
 async function record() {
   const dir = path.join(__dirname, 'recordings', new Date().toISOString().replace(/[:.]/g, '-'));
+
+  const { ctx, page, close } = await openBrowser();
   fs.mkdirSync(path.join(dir, 'screens'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'dom'), { recursive: true });
   const framesFile = fs.createWriteStream(path.join(dir, 'frames.jsonl.gz'));
   const frames = zlib.createGzip();
   frames.pipe(framesFile);
   const clicks = fs.createWriteStream(path.join(dir, 'clicks.jsonl'));
-  const { ctx, page } = await openBrowser();
   let nFrames = 0;
   let nShots = 0;
 
@@ -114,7 +139,8 @@ async function record() {
     clicks.write(JSON.stringify(info) + '\n');
     if (Date.now() - lastClickShot > 800) { lastClickShot = Date.now(); setTimeout(shot, 400); }
   });
-  await page.goto(URL);
+  if (!CONNECT || !page.url().startsWith('http')) await page.goto(URL);
+  else console.log(`Attached to your Chrome tab: ${page.url()}\nReload that tab (or start a new game) so its game connection gets recorded.`);
   if (process.env.CATAN_RECORDER_SELFTEST) {
     // Test hook: real mouse clicks, to check that clicks get recorded.
     await page.mouse.click(300, 300);
@@ -138,7 +164,7 @@ async function record() {
       new Promise(res => clicks.end(res)),
     ]);
     console.log(`\nSaved ${nFrames} messages and ${nShots} screenshots to ${path.relative(process.cwd(), dir)}`);
-    await ctx.close().catch(() => {});
+    await close().catch(() => {});
     process.exit(0);
   };
   process.on('SIGINT', stop);
@@ -146,14 +172,14 @@ async function record() {
 }
 
 async function runCalibration() {
-  const { ctx, page } = await openBrowser();
-  process.on('SIGINT', () => ctx.close().finally(() => process.exit(0)));
+  const { ctx, page, close } = await openBrowser();
+  process.on('SIGINT', () => close().finally(() => process.exit(0)));
   const queue = [];
   let waiting = null;
   await captureClicks(page, info => {
     if (waiting) { const w = waiting; waiting = null; w(info); } else queue.push(info);
   });
-  await page.goto(URL);
+  if (!CONNECT || !page.url().startsWith('http')) await page.goto(URL);
   const nextClick = () => new Promise(res => { queue.length = 0; waiting = res; });
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = q => new Promise(res => rl.question(q, res));
@@ -186,7 +212,7 @@ async function runCalibration() {
   fs.writeFileSync(file, JSON.stringify(cal, null, 2) + '\n');
   console.log(`Saved ${path.relative(process.cwd(), file)}:`, JSON.stringify(cal.board));
   rl.close();
-  await ctx.close();
+  await close();
 }
 
 (calibrate ? runCalibration() : record()).catch(e => {
