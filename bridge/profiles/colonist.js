@@ -54,8 +54,8 @@ const SEL = {
   pickCard: code => `[class*="cardSelection-"] [data-card-enum="${code}"]`,
   confirm: '[class*="actionBox-"] [class*="confirmButton-"]',
   anyConfirm: '[class*="confirmButton-"]',
-  // A guess until a recorded game shows the "choose who to rob" screen.
-  victim: color => `[class*="actionBox-"] [data-player-color="${color}"]`,
+  // "Choose a player to steal 1 random card": avatars with the player's name.
+  victim: name => `[class*="actionBox-"] [class*="playerOption-"]:has([class*="playerName-"]:text-is(${JSON.stringify(name)}))`,
 };
 
 /** Decodes one WebSocket frame payload to a message object (or null). */
@@ -181,7 +181,21 @@ module.exports = {
       board: e.board,
       screen: { x: e.points.reduce((a, p) => a + p.x, 0) / e.points.length, y: e.points.reduce((a, p) => a + p.y, 0) / e.points.length },
     }));
-    if (pairs.length < 3) return;
+    if (pairs.length < 3) {
+      // Too few spots for size and rotation: at least correct the overall shift.
+      if (this.cal && !this.fitted) {
+        const b = this.cal.board;
+        const rot = ((b.rotation || 0) * Math.PI) / 180;
+        let dx = 0;
+        let dy = 0;
+        for (const q of pairs) {
+          dx += q.screen.x - (b.centerX + (q.board.x * Math.cos(rot) - q.board.y * Math.sin(rot)) * b.hexSize);
+          dy += q.screen.y - (b.centerY + (q.board.x * Math.sin(rot) + q.board.y * Math.cos(rot)) * b.hexSize);
+        }
+        this.offset = { x: dx / pairs.length, y: dy / pairs.length };
+      }
+      return;
+    }
     let fit = fitSimilarity(pairs);
     // Drop the worst-fitting spot (a stray report) a couple of times if needed.
     for (let k = 0; fit && fit.maxError > 0.25 * fit.hexSize && pairs.length > 3 && k < 2; k++) {
@@ -239,31 +253,21 @@ module.exports = {
     const { expected, kind = 'corner', mode, button } = opts;
     const page = driver.page;
     if (expected !== undefined && expected >= 0) {
-      const at = async p => {
-        this.hover = null;
-        await page.mouse.move(p.x, p.y, { steps: 2 });
-        await sleep(90);
-        return this.hover && this.hover.index === expected;
-      };
-      let found = await at(pt) ? pt : null;
-      // Search outwards; if the fit improves meanwhile, jump to the new estimate.
-      const size = this.cal.board.hexSize;
-      let center = pt;
-      for (let ring = 1; !found && ring <= 6; ring++) {
-        for (let k = 0; !found && k < 8; k++) {
-          const a = (Math.PI / 4) * k + ring * 0.4;
-          const p = { x: center.x + Math.cos(a) * ring * size * 0.07, y: center.y + Math.sin(a) * ring * size * 0.07 };
-          if (await at(p)) found = p;
-        }
-        if (!found && this.lastTarget) {
-          const p = (await this.transform()).toScreen(this.lastTarget);
-          if (Math.hypot(p.x - center.x, p.y - center.y) > 2) { center = p; if (await at(p)) found = p; }
-        }
+      await this.warmUp(page);
+      const t = await this.transform();
+      const aim = this.lastTarget ? t.toScreen(this.lastTarget) : pt;
+      let dir = null;
+      if (kind === 'edge' && this.lastEdge) {
+        const a = t.toScreen(this.lastEdge[0]);
+        const b = t.toScreen(this.lastEdge[1]);
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
       }
+      let found = await this.search(page, aim, idx => idx === expected, kind, Date.now() + 12000, dir);
       // colonist never reported any spot this session: it may not send hover
       // reports any more, so click the best estimate rather than nothing.
       if (!found && this.hoverSeen) throw new Error("colonist didn't confirm the spot under the mouse");
-      pt = found || pt;
+      pt = found || aim;
     }
     const size = this.cal.board.hexSize;
     const r = NUDGE[kind] * size;
@@ -281,6 +285,74 @@ module.exports = {
       if (await this.waitFor(() => this.game.boardKey() !== before, 900)) return;
     }
     throw new Error('the click on the board did not register');
+  },
+
+  /**
+   * Setup warm-up: while many spots glow, point at a few spread over the board.
+   * Each one colonist confirms is an exact data point; together they pin the
+   * board's position, size and rotation before any click. Takes a few seconds.
+   */
+  async warmUp(page) {
+    if (this.warmedUp || !this.cal) return;
+    this.warmedUp = true;
+    const spots = this.game.highlights.corners.slice();
+    if (spots.length < 6) return;
+    const pos = spots.map(i => ({ i, b: this.game.boardPos('corner', i) }));
+    // Farthest-point sampling: spots spread over the whole board.
+    const chosen = [pos.reduce((a, q) => (Math.hypot(q.b.x, q.b.y) > Math.hypot(a.b.x, a.b.y) ? q : a))];
+    while (chosen.length < 6) {
+      let best = null;
+      let bestD = -1;
+      for (const q of pos) {
+        const d = Math.min(...chosen.map(c => Math.hypot(c.b.x - q.b.x, c.b.y - q.b.y)));
+        if (d > bestD) { bestD = d; best = q; }
+      }
+      chosen.push(best);
+    }
+    const deadline = Date.now() + 9000;
+    let found = 0;
+    for (const c of chosen) {
+      if (Date.now() > deadline) break;
+      const center = (await this.transform()).toScreen(c.b);
+      if (await this.search(page, center, idx => idx === c.i, 'corner', deadline)) found++;
+    }
+    console.log(`  checked the board's position against ${found} glowing spots`);
+  },
+
+  /**
+   * Moves the mouse around `center` until colonist reports a spot accepted by
+   * `ok`. Corners: rings around the point. Edges: across the edge's line first.
+   * Returns the screen point, or null.
+   */
+  async search(page, center, ok, kind, deadline = Infinity, edgeDir = null) {
+    const size = this.cal.board.hexSize;
+    const at = async p => {
+      this.hover = null;
+      await page.mouse.move(p.x, p.y, { steps: 2 });
+      await sleep(80);
+      return this.hover && this.hover.index !== null && ok(this.hover.index);
+    };
+    const pts = [center];
+    if (kind === 'edge' && edgeDir) {
+      const n = { x: -edgeDir.y, y: edgeDir.x }; // across the road
+      for (let a = -0.25; a <= 0.25001; a += 0.125) {
+        for (let d = 0.04; d <= 0.5; d += 0.04) {
+          for (const sgn of [1, -1]) pts.push({ x: center.x + (n.x * sgn * d + edgeDir.x * a) * size, y: center.y + (n.y * sgn * d + edgeDir.y * a) * size });
+        }
+      }
+    } else {
+      for (let ring = 1; ring <= 7; ring++) {
+        for (let k = 0; k < 8 + ring * 2; k++) {
+          const a = (2 * Math.PI * k) / (8 + ring * 2);
+          pts.push({ x: center.x + Math.cos(a) * ring * size * 0.065, y: center.y + Math.sin(a) * ring * size * 0.065 });
+        }
+      }
+    }
+    for (const p of pts) {
+      if (Date.now() > deadline) return null;
+      if (await at(p)) return p;
+    }
+    return null;
   },
 
   /** Polls `cond` for up to `ms` milliseconds. */
@@ -330,7 +402,11 @@ module.exports = {
     const t = await this.transform();
     const g = this.game;
     const vertex = () => t.toScreen((this.lastTarget = geometry.vertex(move.vertex)));
-    const edge = () => t.toScreen((this.lastTarget = geometry.edge(move.edge)));
+    const edge = () => {
+      const [q, r, side] = move.edge;
+      this.lastEdge = [geometry.vertex([q, r, side]), geometry.vertex([q, r, (side + 1) % 6])];
+      return t.toScreen((this.lastTarget = geometry.edge(move.edge)));
+    };
     switch (move.kind) {
       case 'placeSettlement': return this.clickBoard(driver, vertex(), { expected: g.cornerIndex(move.vertex), kind: 'corner' });
       case 'placeRoad': return this.clickBoard(driver, edge(), { expected: g.edgeIndex(move.edge), kind: 'edge' });
@@ -339,7 +415,11 @@ module.exports = {
       case 'buildSettlement': await driver.clickSelector(SEL.settlement); return this.clickBoard(driver, vertex(), { kind: 'corner', mode: MODE.buildSettlement, button: SEL.settlement });
       case 'buildCity': await driver.clickSelector(SEL.city); return this.clickBoard(driver, vertex(), { kind: 'corner', mode: MODE.buildCity, button: SEL.city });
       case 'buildRoad': await driver.clickSelector(SEL.road); return this.clickBoard(driver, edge(), { kind: 'edge', mode: MODE.buildRoad, button: SEL.road });
-      case 'steal': return driver.clickSelector(SEL.victim(g.playOrder[move.victim]), { timeout: 1500 });
+      case 'steal': {
+        const snap = g.snapshot();
+        await driver.clickSelector(SEL.victim(snap.players[move.victim].name), { timeout: 3000 });
+        return driver.clickSelector(SEL.confirm);
+      }
       case 'roll': return driver.clickSelector(SEL.roll);
       case 'endTurn': return driver.clickSelector(SEL.endTurn);
       case 'buyDevCard': return driver.clickSelector(SEL.buyDev);

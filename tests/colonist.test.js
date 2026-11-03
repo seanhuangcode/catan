@@ -148,7 +148,10 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
   let refused = false;
   await profile.performMove({ kind: 'steal', victim: 1 }, driver);
   check('discarding picks cards from your hand and confirms', clicks.join(' ').includes('#player-card-inventory [data-card-enum="1"] #player-card-inventory [data-card-enum="3"] #player-card-inventory [data-card-enum="3"] [class*="confirmButton-"]'));
-  check('stealing clicks the chosen player', clicks[clicks.length - 1].includes(`data-player-color="${profile.game.playOrder[1]}"`));
+  const victimName = profile.game.snapshot().players[1].name;
+  check('stealing clicks the chosen player, then confirms',
+    String(clicks[clicks.length - 2]).includes('playerOption-') && String(clicks[clicks.length - 2]).includes(JSON.stringify(victimName))
+    && String(clicks[clicks.length - 1]).includes('confirmButton-'));
   try { await profile.performMove({ kind: 'bankTrade', give: { wood: 4 }, get: { ore: 1 } }, driver); } catch (e) { refused = true; }
   check("moves it can't make are handed to the player", refused);
 
