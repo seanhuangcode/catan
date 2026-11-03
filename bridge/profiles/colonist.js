@@ -111,6 +111,7 @@ module.exports = {
       process.on('exit', end);
       process.on('SIGINT', () => { end(); setTimeout(() => process.exit(0), 300); });
     } catch (e) { log = null; }
+    if (log) this.startRecording(page);
     const record = (dir, payload) => {
       if (!log) return;
       const binary = typeof payload !== 'string';
@@ -129,7 +130,10 @@ module.exports = {
     // Track the mouse on the page (yours or the autopilot's) to pair with hover reports.
     await page.exposeBinding('__catanMouse', (_src, p) => {
       this.mouse = { x: p.x, y: p.y, t: Date.now() };
-      if (p.down) this.lastDown = this.mouse;
+      if (p.down) {
+        this.lastDown = this.mouse;
+        this.note({ mousedown: { x: Math.round(p.x), y: Math.round(p.y) }, actionState: this.actionState() });
+      }
     }).catch(() => {});
     const track = () => {
       window.addEventListener('mousemove', e => window.__catanMouse({ x: e.clientX, y: e.clientY }), true);
@@ -145,6 +149,47 @@ module.exports = {
     await page.evaluate(track).catch(() => {});
     console.log('Waiting for a game against bots to start (or continue).');
     if (!this.cal) console.log('Board position not known yet: during setup, move your mouse over a few glowing spots.');
+  },
+
+  /**
+   * Records the game into the session folder so it can be looked at afterwards:
+   *   screens/*.jpg   the page every 4 s and right after every board click
+   *   events.jsonl    every mouse click (yours and the autopilot's), every move
+   *                   the autopilot tries, and which screenshot was taken when
+   *   console.txt     everything the autopilot printed
+   */
+  startRecording(page) {
+    const dir = path.join(this.sessionDir, 'screens');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      this.events = fs.createWriteStream(path.join(this.sessionDir, 'events.jsonl'));
+      const out = fs.createWriteStream(path.join(this.sessionDir, 'console.txt'));
+      const write = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (chunk, ...rest) => { try { out.write(chunk); } catch (e) { /* closed */ } return write(chunk, ...rest); };
+    } catch (e) { return; }
+    let n = 0;
+    let busy = false;
+    this.shot = async why => {
+      if (busy || n >= 3000) return null;
+      busy = true;
+      const file = `${String(++n).padStart(4, '0')}.jpg`;
+      try {
+        await page.screenshot({ path: path.join(dir, file), type: 'jpeg', quality: 45, scale: 'css' });
+        this.note({ shot: file, why });
+      } catch (e) { /* page busy */ } finally { busy = false; }
+      return file;
+    };
+    setInterval(() => { if (this.game.started) this.shot('every 4 s'); }, 4000).unref();
+    console.log(`Recording this game to ${path.relative(process.cwd(), this.sessionDir)}`);
+  },
+
+  actionState() {
+    const st = this.game && this.game.state;
+    return st && st.currentState ? st.currentState.actionState : undefined;
+  },
+
+  note(event) {
+    if (this.events) this.events.write(JSON.stringify({ t: Date.now(), ...event }) + '\n');
   },
 
   /** colonist says the mouse is over spot `index` (or nothing): learn the board's position from it. */
@@ -282,7 +327,10 @@ module.exports = {
       }
       const before = this.game.boardKey();
       await driver.clickPoint(p);
-      if (await this.waitFor(() => this.game.boardKey() !== before, 900)) return;
+      const landed = await this.waitFor(() => this.game.boardKey() !== before, 900);
+      this.note({ boardClick: { x: Math.round(p.x), y: Math.round(p.y) }, kind, expected, target: this.lastTarget, landed, actionState: this.actionState(), calibration: this.cal && this.cal.board, offset: this.offset });
+      if (this.shot) await this.shot(landed ? 'board click landed' : 'board click missed');
+      if (landed) return;
     }
     throw new Error('the click on the board did not register');
   },
@@ -398,6 +446,7 @@ module.exports = {
 
   async performMove(move, driver) {
     const BOARD = ['placeSettlement', 'placeRoad', 'placeFreeRoad', 'moveRobber', 'buildSettlement', 'buildCity', 'buildRoad'];
+    this.note({ move, actionState: this.actionState(), highlights: this.game.highlights });
     if (BOARD.includes(move.kind)) await this.ensureBoard();
     const t = await this.transform();
     const g = this.game;

@@ -47,7 +47,7 @@ This found and fixed one real rule difference: colonist's friendly robber also p
 - Cards are clicked by their card code (`[data-card-enum]`).
 - Card pickers (Year of Plenty, Monopoly, discards) use the confirm button.
 - The board is a canvas, so it's clicked by position from the calibration. During setup colonist reports which spot is under the mouse; the autopilot checks that before clicking and fine-tunes the calibration from it.
-- Trades aren't automated yet; choosing who to rob and discarding use best guesses at colonist's screens until a session log shows them. The network never picks trades on colonist. When a move can't be clicked, the autopilot tells you what to do and waits for you.
+- Trades aren't automated yet. The network never picks trades on colonist. When a move can't be clicked, the autopilot tells you what to do and waits for you.
 
 ### Playing a game with it
 
@@ -62,7 +62,7 @@ It opens Chrome on colonist.io (a separate Chrome profile in `~/colonist-chrome`
 
 **Learning as it plays.** Every piece of yours that appears where a click just happened (the autopilot's or yours) pins that spot's exact screen position and refines the board fit, including in the main game, where there are no hover reports. A main-game click that doesn't register is retried with small nudges that stay well inside the intended spot, re-pressing the build button if colonist left build mode.
 
-**Session logs.** Each run saves the game's messages to `bridge/sessions/<time>/`, plus a page snapshot and screenshot whenever a move is handed to you (`handover-*.html.gz`, `.jpg`). Those show exactly how colonist's screens for unsupported moves look, so they can be automated. Push a session folder (`git add -f bridge/sessions/...`) to share it.
+**Session logs.** Each run records the game to `bridge/sessions/<time>/`: the game's messages (`frames.jsonl.gz`), a screenshot every 4 seconds and after every board click (`screens/`), every click and every move the autopilot tried (`events.jsonl`), what it printed (`console.txt`), and a page snapshot whenever a move is handed to you (`handover-*`). This works in advice mode too, so you can record your own games. Run `npm run share-session` after a game to push the newest session to its own branch.
 
 ### Message codes (from the recorded game)
 

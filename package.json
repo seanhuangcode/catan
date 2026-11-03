@@ -18,7 +18,8 @@
     "open-chrome": "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"$HOME/colonist-chrome\" https://colonist.io/",
     "record-colonist-chrome": "node bridge/record-colonist.js --connect",
     "autopilot-colonist": "node bridge/autopilot.js --profile colonist --connect",
-    "play-colonist": "node bridge/play-colonist.js"
+    "play-colonist": "node bridge/play-colonist.js",
+    "share-session": "node bridge/share-session.js"
   },
   "author": "Sean Huang",
   "license": "MIT",
