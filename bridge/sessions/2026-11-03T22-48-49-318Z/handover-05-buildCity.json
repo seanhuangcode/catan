@@ -1,0 +1,21 @@
+{
+ "move": {
+  "action": 151,
+  "label": "CITY[25]",
+  "kind": "buildCity",
+  "vertex": [
+   -2,
+   0,
+   2
+  ]
+ },
+ "actionState": 7,
+ "highlights": {
+  "corners": [
+   10,
+   30
+  ],
+  "edges": [],
+  "tiles": []
+ }
+}

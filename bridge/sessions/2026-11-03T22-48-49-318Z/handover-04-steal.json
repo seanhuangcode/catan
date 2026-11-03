@@ -1,0 +1,14 @@
+{
+ "move": {
+  "action": 199,
+  "label": "STEAL[0]",
+  "kind": "steal",
+  "victim": 3
+ },
+ "actionState": 27,
+ "highlights": {
+  "corners": [],
+  "edges": [],
+  "tiles": []
+ }
+}

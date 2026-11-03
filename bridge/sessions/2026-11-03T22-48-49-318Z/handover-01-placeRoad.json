@@ -1,0 +1,22 @@
+{
+ "move": {
+  "action": 109,
+  "label": "ROAD[55]",
+  "kind": "placeRoad",
+  "edge": [
+   -1,
+   1,
+   3
+  ]
+ },
+ "actionState": 3,
+ "highlights": {
+  "corners": [],
+  "edges": [
+   17,
+   21,
+   18
+  ],
+  "tiles": []
+ }
+}

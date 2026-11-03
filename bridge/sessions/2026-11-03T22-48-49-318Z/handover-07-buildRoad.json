@@ -1,0 +1,18 @@
+{
+ "move": {
+  "action": 116,
+  "label": "ROAD[62]",
+  "kind": "buildRoad",
+  "edge": [
+   -2,
+   2,
+   1
+  ]
+ },
+ "actionState": 0,
+ "highlights": {
+  "corners": [],
+  "edges": [],
+  "tiles": []
+ }
+}
