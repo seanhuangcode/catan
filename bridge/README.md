@@ -56,7 +56,9 @@ Use colonist.io's **computer opponents** (or friends who agree). On a Mac, in th
 npm run play-colonist               # plays your seat, clicking the moves itself
 npm run play-colonist -- --advise   # only shows the suggested move on the board
 ```
-It opens Chrome on colonist.io (a separate Chrome profile in `~/colonist-chrome`), asks you to measure the board the first time (start a game, click the middle tile, then its right neighbor), reloads the tab so it can follow the game, and plays. Don't resize the window after measuring; delete `bridge/profiles/colonist.calibration.json` to measure again.
+It opens Chrome on colonist.io (a separate Chrome profile in `~/colonist-chrome`), reloads the tab so it can follow the game, and plays.
+
+**Where the board is.** The board is drawn on a canvas, so clicks go by position. During setup, colonist reports which glowing spot is under the mouse; pairing those reports with the mouse position gives the board's exact position, size and rotation (`bridge/fit.js`). The first time, move your mouse over a few glowing spots when your first settlement is due; it says "learned the board's position" and saves it. Setup clicks are also checked against those reports before clicking, so a slightly stale position self-corrects. If you resize or zoom the window, delete `bridge/profiles/colonist.calibration.json` and hover a few spots again.
 
 ### Message codes (from the recorded game)
 

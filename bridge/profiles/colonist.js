@@ -13,11 +13,13 @@
  *   cards       by their card code: [data-card-enum="11"] is a Knight, 1-5 are resources
  *   pop-ups     card pickers (Year of Plenty, Monopoly, discards) by card code,
  *               then the confirm button
- *   the board   is a canvas, so by position, from the calibration in
- *               bridge/profiles/colonist.calibration.json (npm run calibrate-colonist).
- *               During setup colonist reports which spot the mouse is over;
- *               the profile checks that before clicking and fine-tunes the
- *               calibration from it.
+ *   the board   is a canvas, so by position. Whenever a spot glows (setup),
+ *               colonist reports which spot is under the mouse. Pairing those
+ *               reports with the mouse position gives the board's exact place,
+ *               size and rotation on screen (bridge/fit.js), saved in
+ *               bridge/profiles/colonist.calibration.json. Moving the mouse over
+ *               a few glowing spots during setup is enough; setup clicks are
+ *               also checked against those reports before clicking.
  * Moves this profile can't make yet (trades, choosing between several
  * players to rob) are left to the player; see bridge/autopilot.js.
  */
@@ -25,7 +27,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { ColonistGame } = require('../colonist-state.js');
+const { ColonistGame, colonistCorner, colonistEdgeEnds } = require('../colonist-state.js');
+const { fitSimilarity } = require('../fit.js');
 const { decode } = require('../msgpack.js');
 const { geometry, sleep } = require('../driver.js');
 
@@ -75,23 +78,75 @@ module.exports = {
     this.offset = { x: 0, y: 0 };
     this.game = new ColonistGame();
     this.hover = null;
+    this.mouse = null;
+    this.samples = new Map(); // "corner:12" -> {board: {x, y}, points: [{x, y}]}
+    this.fitted = false;
     const watch = ws => {
       if (!/colonist\.io/.test(ws.url())) return;
       ws.on('framereceived', f => { const m = decodeFrame(f.payload, false); if (m) this.game.handle(m); });
       ws.on('framesent', f => {
         const m = decodeFrame(f.payload, true);
-        if (m && m.action === 66) this.hover = { index: m.payload, t: Date.now() };
+        if (m && m.action === 66) this.onHover(m.payload);
       });
     };
     page.on('websocket', watch);
+    // Track the mouse on the page (yours or the autopilot's) to pair with hover reports.
+    await page.exposeBinding('__catanMouse', (_src, p) => { this.mouse = { x: p.x, y: p.y, t: Date.now() }; }).catch(() => {});
+    const track = () => window.addEventListener('mousemove', e => window.__catanMouse({ x: e.clientX, y: e.clientY }), true);
+    await page.addInitScript(track).catch(() => {});
     // colonist's connection opens when the page loads, so it has to load again
     // now that we're listening. colonist reconnects to a running game by itself.
     if (/colonist\.io/.test(page.url())) {
       console.log('Reloading the colonist tab so the autopilot can follow the game…');
       await page.reload().catch(() => {});
     }
+    await page.evaluate(track).catch(() => {});
     console.log('Waiting for a game against bots to start (or continue).');
-    if (!this.cal) console.log('No board calibration yet: run `npm run calibrate-colonist` first to let it click the board.');
+    if (!this.cal) console.log('Board position not known yet: during setup, move your mouse over a few glowing spots.');
+  },
+
+  /** colonist says the mouse is over spot `index` (or nothing): learn the board's position from it. */
+  onHover(index) {
+    this.hover = { index, t: Date.now() };
+    if (index !== null && index !== undefined) this.hoverSeen = true;
+    if (index === null || index === undefined || !this.game.started || !this.mouse || Date.now() - this.mouse.t > 400) return;
+    const as = (this.game.state.currentState || {}).actionState;
+    let key;
+    let board;
+    const ms = this.game.state.mapState;
+    if ((as === 1 || as === 6 || as === 7) && ms.tileCornerStates[index]) {
+      key = 'corner:' + index;
+      board = colonistCorner(ms.tileCornerStates[index]);
+    } else if ((as === 3 || as === 4 || as === 30 || as === 31) && ms.tileEdgeStates[index]) {
+      const [a, b] = colonistEdgeEnds(ms.tileEdgeStates[index]);
+      key = 'edge:' + index;
+      board = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    } else return;
+    const entry = this.samples.get(key) || { board, points: [] };
+    entry.points.push({ x: this.mouse.x, y: this.mouse.y });
+    if (entry.points.length > 20) entry.points.shift();
+    this.samples.set(key, entry);
+    this.refit();
+  },
+
+  /** Fits the board position from the hover samples once they span a few spots. */
+  refit() {
+    const pairs = [...this.samples.values()].map(e => ({
+      board: e.board,
+      screen: { x: e.points.reduce((a, p) => a + p.x, 0) / e.points.length, y: e.points.reduce((a, p) => a + p.y, 0) / e.points.length },
+    }));
+    if (pairs.length < 3) return;
+    const fit = fitSimilarity(pairs);
+    if (!fit || fit.maxError > 0.4 * fit.hexSize) return;
+    const board = { centerX: +fit.centerX.toFixed(1), centerY: +fit.centerY.toFixed(1), hexSize: +fit.hexSize.toFixed(2), rotation: +fit.rotation.toFixed(2), fromHover: pairs.length };
+    const first = !this.fitted;
+    this.cal = { board };
+    this.offset = { x: 0, y: 0 };
+    this.fitted = true;
+    if (this.persist !== false) {
+      try { fs.writeFileSync(CALIBRATION, JSON.stringify(this.cal, null, 2) + '\n'); } catch (e) { /* read-only */ }
+    }
+    if (first) console.log(`  learned the board's position from ${pairs.length} spots (saved)`);
   },
 
   async readSnapshot() {
@@ -103,7 +158,7 @@ module.exports = {
   },
 
   async transform() {
-    if (!this.cal) return { toScreen: () => { throw new Error('the board is not calibrated (npm run calibrate-colonist)'); } };
+    if (!this.cal) return { toScreen: () => { throw new Error("the board's position isn't known yet: move your mouse over a few glowing spots during setup"); } };
     const b = this.cal.board;
     const rot = ((b.rotation || 0) * Math.PI) / 180;
     const cos = Math.cos(rot);
@@ -117,42 +172,50 @@ module.exports = {
   },
 
   /**
-   * Points at a board spot. During setup colonist reports which spot the
-   * mouse is over (as `expected`'s index); if it isn't the expected one, search
-   * nearby and remember the correction. Then click.
+   * Clicks a board spot. During setup, colonist reports which spot is under
+   * the mouse: point first, and only click once it reports `expected`
+   * (searching nearby if needed; every report also refines the board fit).
    */
   async clickBoard(driver, pt, expected) {
     const page = driver.page;
-    if (expected !== undefined && expected >= 0) {
-      let reported = false;
-      const tryAt = async p => {
-        this.hover = null;
-        await page.mouse.move(p.x, p.y, { steps: 3 });
-        await sleep(120);
-        if (this.hover) reported = true;
-        return this.hover && this.hover.index === expected;
-      };
-      let hit = await tryAt(pt);
-      if (!hit && !reported) {
-        // No hover report at all (colonist only sends them during setup): just click.
-        return driver.clickPoint(pt);
+    if (expected === undefined || expected < 0) return driver.clickPoint(pt);
+    const at = async p => {
+      this.hover = null;
+      await page.mouse.move(p.x, p.y, { steps: 2 });
+      await sleep(90);
+      return this.hover && this.hover.index === expected;
+    };
+    const target = async () => (await this.transform()).toScreen(this.lastTarget);
+    if (await at(pt)) return driver.clickPoint(pt);
+    // Search outwards; if the fit improves meanwhile, jump to the new estimate.
+    const size = this.cal.board.hexSize;
+    let center = pt;
+    for (let ring = 1; ring <= 6; ring++) {
+      for (let k = 0; k < 8; k++) {
+        const a = (Math.PI / 4) * k + ring * 0.4;
+        const p = { x: center.x + Math.cos(a) * ring * size * 0.07, y: center.y + Math.sin(a) * ring * size * 0.07 };
+        if (await at(p)) return driver.clickPoint(p);
       }
-      const size = this.cal ? this.cal.board.hexSize : 50;
-      for (let ring = 1; !hit && ring <= 3; ring++) {
-        for (let k = 0; k < 8 && !hit; k++) {
-          const a = (Math.PI / 4) * k;
-          const p = { x: pt.x + Math.cos(a) * ring * size * 0.08, y: pt.y + Math.sin(a) * ring * size * 0.08 };
-          if (await tryAt(p)) {
-            hit = true;
-            this.offset.x += p.x - pt.x;
-            this.offset.y += p.y - pt.y;
-            pt = p;
-          }
+      if (this.lastTarget) {
+        const p = await target();
+        if (Math.hypot(p.x - center.x, p.y - center.y) > 2) {
+          center = p;
+          if (await at(p)) return driver.clickPoint(p);
         }
       }
-      if (!hit) throw new Error('colonist did not report the expected spot under the mouse; recalibrate (npm run calibrate-colonist)');
     }
-    await driver.clickPoint(pt);
+    // colonist never reported any spot this session: it may not send hover
+    // reports any more, so click the best estimate rather than nothing.
+    if (!this.hoverSeen) return driver.clickPoint(pt);
+    throw new Error("colonist didn't confirm the spot under the mouse");
+  },
+
+  /** Waits (up to 20 s) for the board's position, asking the player to hover glowing spots. */
+  async ensureBoard() {
+    if (this.cal) return;
+    console.log("  I don't know where the board is yet: please move your mouse over a few of the glowing spots.");
+    for (let i = 0; i < 100 && !this.cal; i++) await sleep(200);
+    if (!this.cal) throw new Error("the board's position isn't known yet");
   },
 
   async pickCards(driver, cards) {
@@ -163,10 +226,12 @@ module.exports = {
   },
 
   async performMove(move, driver) {
+    const BOARD = ['placeSettlement', 'placeRoad', 'placeFreeRoad', 'moveRobber', 'buildSettlement', 'buildCity', 'buildRoad'];
+    if (BOARD.includes(move.kind)) await this.ensureBoard();
     const t = await this.transform();
     const g = this.game;
-    const vertex = () => t.toScreen(geometry.vertex(move.vertex));
-    const edge = () => t.toScreen(geometry.edge(move.edge));
+    const vertex = () => t.toScreen((this.lastTarget = geometry.vertex(move.vertex)));
+    const edge = () => t.toScreen((this.lastTarget = geometry.edge(move.edge)));
     switch (move.kind) {
       case 'placeSettlement': return this.clickBoard(driver, vertex(), g.cornerIndex(move.vertex));
       case 'placeRoad': return this.clickBoard(driver, edge(), g.edgeIndex(move.edge));

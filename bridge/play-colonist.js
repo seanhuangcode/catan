@@ -5,9 +5,9 @@
  *   npm run play-colonist            plays (clicks the moves itself)
  *   npm run play-colonist -- --advise   only shows suggestions on the board
  *
- * It opens Google Chrome on colonist.io if needed (macOS), measures the board
- * the first time (two clicks), then starts the autopilot attached to that
- * Chrome. Use it only against colonist.io's computer opponents, or in private
+ * It opens Google Chrome on colonist.io if needed (macOS), then starts the
+ * autopilot attached to that Chrome. The first time, move the mouse over a few
+ * glowing spots during setup so it learns where the board is. Use it only against colonist.io's computer opponents, or in private
  * games with friends who agree.
  */
 'use strict';
@@ -16,7 +16,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { spawn, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const PORT = 9222;
 const CALIBRATION = path.join(__dirname, 'profiles', 'colonist.calibration.json');
@@ -43,10 +43,9 @@ async function main() {
   }
 
   if (!fs.existsSync(CALIBRATION)) {
-    console.log('\nFirst time only: the autopilot needs to know where the board is on your screen.');
-    console.log('In Chrome, start a game against bots so you can see the board, then follow the prompts.\n');
-    const r = spawnSync(process.execPath, [path.join(__dirname, 'record-colonist.js'), '--calibrate', '--connect'], { stdio: 'inherit' });
-    if (r.status !== 0 || !fs.existsSync(CALIBRATION)) { console.log('Calibration did not finish; run this again.'); process.exit(1); }
+    console.log('\nFirst game: when your first settlement is due, move your mouse slowly over a few');
+    console.log('of the glowing spots on the board. That shows the autopilot exactly where the board is');
+    console.log("(it says \"learned the board's position\" and remembers it).\n");
   }
 
   const { run } = require('./autopilot.js');

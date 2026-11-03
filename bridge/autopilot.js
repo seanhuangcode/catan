@@ -134,7 +134,11 @@ async function run(opts) {
     if (changed || move.kind === 'offer') stuck = 0; // a declined offer changes nothing
     else {
       stats.retries++;
-      if (++stuck >= 3) throw new Error(`Move had no effect three times in a row: ${describe(move)}`);
+      if (++stuck >= 3) {
+        log(`  That didn't work three times. Please do it yourself: ${describe(move)}`);
+        waitingOnYou = key;
+        stuck = 0;
+      }
     }
   }
 

@@ -103,6 +103,7 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
     mouse: { move: async () => {} },
     url: () => 'https://colonist.io/#268598698',
     reload: async () => { reloaded = true; },
+    exposeBinding: async () => {}, addInitScript: async () => {}, evaluate: async () => {},
   };
   const log = console.log;
   console.log = () => {};
@@ -139,6 +140,69 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
   let refused = false;
   try { await profile.performMove({ kind: 'steal', victim: 1 }, driver); } catch (e) { refused = true; }
   check("moves it can't make are handed to the player", refused);
+
+  // Board clicks against a simulated colonist: it knows where the board really
+  // is and reports the glowing spot under the mouse, like the real page.
+  const { geometry } = require('../bridge/driver.js');
+  const { colonistCorner } = require('../bridge/colonist-state.js');
+  const TRUE = { cx: 640, cy: 410, s: 55 };
+  const trueScreen = b => ({ x: TRUE.cx + b.x * TRUE.s, y: TRUE.cy + b.y * TRUE.s });
+  async function setupScenario(cal, userHovers) {
+    const pr = Object.create(require('../bridge/profiles/colonist.js'));
+    pr.persist = false; // don't save a calibration file from a test
+    let sock = null;
+    let binding = null;
+    const h = {};
+    const page = {
+      on: (ev, fn) => { if (ev === 'websocket') sock = fn; },
+      url: () => 'about:blank',
+      exposeBinding: async (name, fn) => { binding = fn; },
+      addInitScript: async () => {}, evaluate: async () => {},
+      mouse: {
+        move: async (x, y) => {
+          binding(null, { x, y });
+          // colonist: report the glowing corner within reach of the mouse.
+          let hit = null;
+          for (const idx of pr.game.highlights.corners) {
+            const p = trueScreen(colonistCorner(pr.game.state.mapState.tileCornerStates[idx]));
+            if (Math.hypot(p.x - x, p.y - y) < 0.3 * TRUE.s) hit = idx;
+          }
+          h.framesent({ payload: JSON.stringify({ action: 66, payload: hit }) });
+        },
+      },
+    };
+    const log = console.log;
+    console.log = () => {};
+    await pr.prepare(page);
+    pr.cal = cal;
+    sock({ url: () => 'wss://socket.svr.colonist.io/', on: (ev, fn) => { h[ev] = fn; } });
+    // Replay the recorded game up to my first setup placement.
+    for (const l of lines) {
+      if (l.raw) continue;
+      if (l.dir === 'sent') { if (l.msg.action === 15) break; continue; }
+      h.framereceived({ payload: JSON.stringify(l.msg) });
+    }
+    for (const idx of userHovers) {
+      const p = trueScreen(colonistCorner(pr.game.state.mapState.tileCornerStates[idx]));
+      await page.mouse.move(p.x + 3, p.y - 2);
+    }
+    const snap = await pr.readSnapshot();
+    const spots = pr.game.highlights.corners;
+    const want = pr.game.cornerRef(spots[spots.length - 1]);
+    const clicked = [];
+    const drv = { page, clickPoint: async pt => clicked.push(pt), clickSelector: async () => {} };
+    let error = null;
+    try { await pr.performMove({ kind: 'placeSettlement', vertex: want }, drv); } catch (e) { error = e.message; }
+    console.log = log;
+    const truth = trueScreen(geometry.vertex(want));
+    const miss = clicked.length ? Math.hypot(clicked[0].x - truth.x, clicked[0].y - truth.y) : Infinity;
+    return { snap, error, miss, fitted: pr.fitted };
+  }
+  const bad = { board: { centerX: TRUE.cx + 30, centerY: TRUE.cy - 18, hexSize: TRUE.s * 1.08, rotation: 2 } };
+  const r1 = await setupScenario(bad, []);
+  check(`a wrong calibration still clicks the right setup spot (off by ${r1.miss.toFixed(1)} px)`, r1.snap.phase === 'setupSettlement' && r1.miss < 0.3 * TRUE.s, r1.error);
+  const r2 = await setupScenario(null, [0, 5, 9, 14, 20]);
+  check('learns the board from you hovering glowing spots, then clicks right', r2.fitted && r2.miss < 0.3 * TRUE.s, r2.error || `miss ${r2.miss}`);
 
   if (failures) { console.log(`\n${failures} test(s) failed`); process.exit(1); }
   console.log('\nAll colonist tests passed');
