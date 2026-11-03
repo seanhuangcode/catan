@@ -115,6 +115,11 @@ class ColonistGame {
     this.selectCards = null; // card picking prompt (Year of Plenty, ...)
     this.publicHands = {}; // color -> expected resources, from public card movements
     this.ended = false;
+    this.winner = null; // winning color, once the game is over
+    // Called with {kind: 'corner'|'edge'|'tile', index} when one of my pieces
+    // (or the robber, on my turn) lands somewhere: lets the profile learn
+    // where on screen that spot is from the click that put it there.
+    this.onPlaced = null;
   }
 
   get started() { return !!this.state; }
@@ -135,14 +140,22 @@ class ColonistGame {
         this.ended = false;
         break;
       case 91:
-        if (this.state && payload && payload.diff) merge(this.state, payload.diff);
+        if (this.state && payload && payload.diff) {
+          this.notePlacements(payload.diff);
+          merge(this.state, payload.diff);
+        }
         break;
       case 30: this.highlights.corners = payload || []; break;
       case 31: this.highlights.edges = payload || []; break;
       case 33: this.highlights.tiles = payload || []; break;
       case 18: this.selectCards = payload; break;
       case 43: this.trackCards(payload); break;
-      case 45: this.ended = true; break;
+      case 45: {
+        this.ended = true;
+        const players = (payload && payload.endGameState && payload.endGameState.players) || {};
+        for (const p of Object.values(players)) if (p && p.winningPlayer) this.winner = p.color;
+        break;
+      }
       default: return true;
     }
     return true;
@@ -172,6 +185,38 @@ class ColonistGame {
     move(givingPlayer, receivingPlayer, givingCards);
     move(receivingPlayer, givingPlayer, receivingCards);
     for (const h of Object.values(this.publicHands)) for (const r of Object.keys(h)) if (h[r] < 0) h[r] = 0;
+  }
+
+  notePlacements(diff) {
+    if (!this.onPlaced) return;
+    const ms = diff.mapState || {};
+    for (const [k, c] of Object.entries(ms.tileCornerStates || {})) {
+      if (c && c.owner === this.me) this.onPlaced({ kind: 'corner', index: Number(k) });
+    }
+    for (const [k, e] of Object.entries(ms.tileEdgeStates || {})) {
+      if (e && e.owner === this.me) this.onPlaced({ kind: 'edge', index: Number(k) });
+    }
+    const rob = diff.mechanicRobberState;
+    const cur = (this.state.currentState || {}).currentTurnPlayerColor;
+    if (rob && rob.locationTileIndex !== undefined && cur === this.me) this.onPlaced({ kind: 'tile', index: rob.locationTileIndex });
+  }
+
+  /** Board position (snapshot units) of a colonist corner, edge midpoint or tile center. */
+  boardPos(kind, index) {
+    const ms = this.state.mapState;
+    if (kind === 'corner') return colonistCorner(ms.tileCornerStates[index]);
+    if (kind === 'edge') { const [a, b] = colonistEdgeEnds(ms.tileEdgeStates[index]); return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+    const h = ms.tileHexStates[index];
+    return center(h.x, h.y);
+  }
+
+  /** A short fingerprint of the board, to tell whether a click changed anything. */
+  boardKey() {
+    if (!this.state) return '';
+    const ms = this.state.mapState;
+    const own = o => Object.entries(o).filter(([, v]) => v.owner).map(([k, v]) => k + ':' + v.owner + ':' + (v.buildingType || v.type)).join(',');
+    const rob = this.state.mechanicRobberState ? this.state.mechanicRobberState.locationTileIndex : '';
+    return own(ms.tileCornerStates) + '|' + own(ms.tileEdgeStates) + '|' + rob;
   }
 
   seatOf(color) { return this.playOrder.indexOf(color); }
@@ -308,6 +353,7 @@ class ColonistGame {
       stealFrom: [],
       freeRoads: as === 30 ? 2 : as === 31 ? 1 : 0,
       lastSetupVertex: null,
+      winner: this.winner !== null ? this.seatOf(this.winner) : undefined,
       actionState: as,
       selectCards: as === 32 ? this.selectCards : null,
     };

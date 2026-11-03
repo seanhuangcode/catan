@@ -96,6 +96,7 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
 // and each kind of move turns into clicks (recorded by a fake driver here).
 (async () => {
   const profile = Object.create(require('../bridge/profiles/colonist.js'));
+  profile.persist = false; // no calibration or session files from tests
   let onSocket = null;
   let reloaded = false;
   const fakePage = {
@@ -104,6 +105,7 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
     url: () => 'https://colonist.io/#268598698',
     reload: async () => { reloaded = true; },
     exposeBinding: async () => {}, addInitScript: async () => {}, evaluate: async () => {},
+    locator: () => ({ first: () => ({ isVisible: async () => false }) }),
   };
   const log = console.log;
   console.log = () => {};
@@ -132,13 +134,22 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
     { kind: 'playYearOfPlenty', resources: ['ore', 'ore'] }, { kind: 'playMonopoly', resource: 'wheat' },
     { kind: 'discard', cards: { wood: 1, sheep: 2 } },
   ];
+  // Stand-in board: build modes are on when needed and every click changes the board.
+  const MODES = { buildRoad: 4, buildSettlement: 6, buildCity: 7, moveRobber: 24 };
+  profile.game.boardKey = () => String(clicks.length);
   let err = null;
-  for (const m of moves) { try { await profile.performMove(m, driver); } catch (e) { err = err || `${m.kind}: ${e.message}`; } }
+  for (const m of moves) {
+    profile.game.state.currentState.actionState = MODES[m.kind] || 0;
+    try { await profile.performMove(m, driver); } catch (e) { err = err || `${m.kind}: ${e.message}`; }
+  }
   check('every supported move turns into clicks', !err, err);
   check('the board center maps to the calibrated point', JSON.stringify(clicks.slice(-0).find(c => Array.isArray(c) && c[0] === 600 && c[1] === 400)) === '[600,400]');
   check('Year of Plenty picks two ore and confirms', clicks.join(' ').includes('[data-card-enum="15"] [class*="cardSelection-"] [data-card-enum="5"] [class*="cardSelection-"] [data-card-enum="5"] [class*="actionBox-"] [class*="confirmButton-"]'));
   let refused = false;
-  try { await profile.performMove({ kind: 'steal', victim: 1 }, driver); } catch (e) { refused = true; }
+  await profile.performMove({ kind: 'steal', victim: 1 }, driver);
+  check('discarding picks cards from your hand and confirms', clicks.join(' ').includes('#player-card-inventory [data-card-enum="1"] #player-card-inventory [data-card-enum="3"] #player-card-inventory [data-card-enum="3"] [class*="confirmButton-"]'));
+  check('stealing clicks the chosen player', clicks[clicks.length - 1].includes(`data-player-color="${profile.game.playOrder[1]}"`));
+  try { await profile.performMove({ kind: 'bankTrade', give: { wood: 4 }, get: { ore: 1 } }, driver); } catch (e) { refused = true; }
   check("moves it can't make are handed to the player", refused);
 
   // Board clicks against a simulated colonist: it knows where the board really
@@ -190,7 +201,17 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
     const spots = pr.game.highlights.corners;
     const want = pr.game.cornerRef(spots[spots.length - 1]);
     const clicked = [];
-    const drv = { page, clickPoint: async pt => clicked.push(pt), clickSelector: async () => {} };
+    const truthPt = trueScreen(geometry.vertex(want));
+    const drv = {
+      page,
+      clickSelector: async () => {},
+      clickPoint: async pt => {
+        clicked.push(pt);
+        if (Math.hypot(pt.x - truthPt.x, pt.y - truthPt.y) < 0.3 * TRUE.s) {
+          pr.game.state.mapState.tileCornerStates[spots[spots.length - 1]].owner = pr.game.me;
+        }
+      },
+    };
     let error = null;
     try { await pr.performMove({ kind: 'placeSettlement', vertex: want }, drv); } catch (e) { error = e.message; }
     console.log = log;
@@ -198,6 +219,57 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
     const miss = clicked.length ? Math.hypot(clicked[0].x - truth.x, clicked[0].y - truth.y) : Infinity;
     return { snap, error, miss, fitted: pr.fitted };
   }
+  // Main game: no hover reports. A road click slightly off misses; the profile
+  // nudges until the road appears, and learns the spot from the click that worked.
+  async function roadScenario() {
+    const pr = Object.create(require('../bridge/profiles/colonist.js'));
+    pr.persist = false;
+    let sock = null;
+    let binding = null;
+    const h = {};
+    const page = {
+      on: (ev, fn) => { if (ev === 'websocket') sock = fn; },
+      url: () => 'about:blank',
+      exposeBinding: async (name, fn) => { binding = fn; },
+      addInitScript: async () => {}, evaluate: async () => {},
+      mouse: { move: async () => {} },
+    };
+    const log = console.log;
+    console.log = () => {};
+    await pr.prepare(page);
+    sock({ url: () => 'wss://socket.svr.colonist.io/', on: (ev, fn) => { h[ev] = fn; } });
+    for (const l of lines) {
+      if (l.raw) continue;
+      if (l.dir === 'sent') { if (l.msg.action === 15) break; continue; }
+      h.framereceived({ payload: JSON.stringify(l.msg) });
+    }
+    pr.cal = { board: { centerX: TRUE.cx + 6, centerY: TRUE.cy + 4, hexSize: TRUE.s, rotation: 0 } };
+    pr.game.state.currentState.actionState = 4;
+    const idx = Object.keys(pr.game.state.mapState.tileEdgeStates).map(Number).find(k => { try { pr.game.edgeRef(k); return !pr.game.state.mapState.tileEdgeStates[k].owner; } catch (e) { return false; } });
+    const want = pr.game.edgeRef(idx);
+    const truth = trueScreen(geometry.edge(want));
+    let clicks = 0;
+    const drv = {
+      page,
+      clickSelector: async () => {},
+      clickPoint: async pt => {
+        clicks++;
+        binding(null, { x: pt.x, y: pt.y, down: true });
+        if (Math.hypot(pt.x - truth.x, pt.y - truth.y) < 0.12 * TRUE.s) {
+          const diff = { mapState: { tileEdgeStates: { [idx]: { owner: pr.game.me, type: 1 } } } };
+          h.framereceived({ payload: JSON.stringify({ id: '130', data: { type: 91, payload: { diff } } }) });
+        }
+      },
+    };
+    let error = null;
+    try { await pr.performMove({ kind: 'buildRoad', edge: want }, drv); } catch (e) { error = e.message; }
+    console.log = log;
+    return { error, clicks, learned: pr.samples.has('edge:' + idx) };
+  }
+  const rr = await roadScenario();
+  check(`a slightly-off road click is nudged until it lands (${rr.clicks} clicks)`, !rr.error && rr.clicks > 1, rr.error);
+  check('the click that worked teaches the profile where that spot is', rr.learned);
+
   const bad = { board: { centerX: TRUE.cx + 30, centerY: TRUE.cy - 18, hexSize: TRUE.s * 1.08, rotation: 2 } };
   const r1 = await setupScenario(bad, []);
   check(`a wrong calibration still clicks the right setup spot (off by ${r1.miss.toFixed(1)} px)`, r1.snap.phase === 'setupSettlement' && r1.miss < 0.3 * TRUE.s, r1.error);

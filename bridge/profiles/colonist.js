@@ -32,7 +32,14 @@ const { fitSimilarity } = require('../fit.js');
 const { decode } = require('../msgpack.js');
 const { geometry, sleep } = require('../driver.js');
 
+const zlib = require('zlib');
+
 const CALIBRATION = path.join(__dirname, 'colonist.calibration.json');
+const SESSIONS = path.join(__dirname, '..', 'sessions');
+// Board modes (actionState) a build button puts colonist in.
+const MODE = { buildRoad: [4], buildSettlement: [6], buildCity: [7], moveRobber: [24], placeFreeRoad: [30, 31] };
+// How far from a spot a nudged click may land without risking a neighboring spot (hex sizes).
+const NUDGE = { corner: 0.22, edge: 0.15, tile: 0.35 };
 const RES_CODE = { wood: 1, brick: 2, sheep: 3, wheat: 4, ore: 5 };
 const DEV_CODE = { playKnight: 11, playMonopoly: 13, playRoadBuilding: 14, playYearOfPlenty: 15 };
 
@@ -46,6 +53,9 @@ const SEL = {
   handCard: code => `#player-card-inventory [data-card-enum="${code}"]`,
   pickCard: code => `[class*="cardSelection-"] [data-card-enum="${code}"]`,
   confirm: '[class*="actionBox-"] [class*="confirmButton-"]',
+  anyConfirm: '[class*="confirmButton-"]',
+  // A guess until a recorded game shows the "choose who to rob" screen.
+  victim: color => `[class*="actionBox-"] [data-player-color="${color}"]`,
 };
 
 /** Decodes one WebSocket frame payload to a message object (or null). */
@@ -81,18 +91,50 @@ module.exports = {
     this.mouse = null;
     this.samples = new Map(); // "corner:12" -> {board: {x, y}, points: [{x, y}]}
     this.fitted = false;
+    this.lastDown = null;
+    this.page = page;
+    // Every piece of mine that lands where a click just happened pins that spot on screen.
+    this.game.onPlaced = ({ kind, index }) => {
+      if (kind === 'tile' || !this.lastDown || Date.now() - this.lastDown.t > 3000) return;
+      this.addSample(`${kind}:${index}`, this.game.boardPos(kind, index), this.lastDown);
+    };
+    // A session log (game messages, plus page snapshots when a move is handed to you)
+    // that can be pushed to improve the profile; see bridge/README.md.
+    this.sessionDir = path.join(SESSIONS, new Date().toISOString().replace(/[:.]/g, '-'));
+    let log = null;
+    try {
+      if (this.persist === false) throw new Error('not saving');
+      fs.mkdirSync(this.sessionDir, { recursive: true });
+      log = zlib.createGzip();
+      log.pipe(fs.createWriteStream(path.join(this.sessionDir, 'frames.jsonl.gz')));
+      const end = () => { try { log.end(); } catch (e) { /* closed */ } };
+      process.on('exit', end);
+      process.on('SIGINT', () => { end(); setTimeout(() => process.exit(0), 300); });
+    } catch (e) { log = null; }
+    const record = (dir, payload) => {
+      if (!log) return;
+      const binary = typeof payload !== 'string';
+      log.write(JSON.stringify({ t: Date.now(), dir, binary, data: binary ? Buffer.from(payload).toString('base64') : payload }) + '\n');
+    };
     const watch = ws => {
       if (!/colonist\.io/.test(ws.url())) return;
-      ws.on('framereceived', f => { const m = decodeFrame(f.payload, false); if (m) this.game.handle(m); });
+      ws.on('framereceived', f => { record('received', f.payload); const m = decodeFrame(f.payload, false); if (m) this.game.handle(m); });
       ws.on('framesent', f => {
+        record('sent', f.payload);
         const m = decodeFrame(f.payload, true);
         if (m && m.action === 66) this.onHover(m.payload);
       });
     };
     page.on('websocket', watch);
     // Track the mouse on the page (yours or the autopilot's) to pair with hover reports.
-    await page.exposeBinding('__catanMouse', (_src, p) => { this.mouse = { x: p.x, y: p.y, t: Date.now() }; }).catch(() => {});
-    const track = () => window.addEventListener('mousemove', e => window.__catanMouse({ x: e.clientX, y: e.clientY }), true);
+    await page.exposeBinding('__catanMouse', (_src, p) => {
+      this.mouse = { x: p.x, y: p.y, t: Date.now() };
+      if (p.down) this.lastDown = this.mouse;
+    }).catch(() => {});
+    const track = () => {
+      window.addEventListener('mousemove', e => window.__catanMouse({ x: e.clientX, y: e.clientY }), true);
+      window.addEventListener('mousedown', e => window.__catanMouse({ x: e.clientX, y: e.clientY, down: true }), true);
+    };
     await page.addInitScript(track).catch(() => {});
     // colonist's connection opens when the page loads, so it has to load again
     // now that we're listening. colonist reconnects to a running game by itself.
@@ -122,8 +164,12 @@ module.exports = {
       key = 'edge:' + index;
       board = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     } else return;
+    this.addSample(key, board, this.mouse);
+  },
+
+  addSample(key, board, point) {
     const entry = this.samples.get(key) || { board, points: [] };
-    entry.points.push({ x: this.mouse.x, y: this.mouse.y });
+    entry.points.push({ x: point.x, y: point.y });
     if (entry.points.length > 20) entry.points.shift();
     this.samples.set(key, entry);
     this.refit();
@@ -136,7 +182,16 @@ module.exports = {
       screen: { x: e.points.reduce((a, p) => a + p.x, 0) / e.points.length, y: e.points.reduce((a, p) => a + p.y, 0) / e.points.length },
     }));
     if (pairs.length < 3) return;
-    const fit = fitSimilarity(pairs);
+    let fit = fitSimilarity(pairs);
+    // Drop the worst-fitting spot (a stray report) a couple of times if needed.
+    for (let k = 0; fit && fit.maxError > 0.25 * fit.hexSize && pairs.length > 3 && k < 2; k++) {
+      const rot = (fit.rotation * Math.PI) / 180;
+      const errOf = q => Math.hypot(fit.centerX + (q.board.x * Math.cos(rot) - q.board.y * Math.sin(rot)) * fit.hexSize - q.screen.x,
+        fit.centerY + (q.board.x * Math.sin(rot) + q.board.y * Math.cos(rot)) * fit.hexSize - q.screen.y);
+      pairs.sort((a, b) => errOf(a) - errOf(b));
+      pairs.pop();
+      fit = fitSimilarity(pairs);
+    }
     if (!fit || fit.maxError > 0.4 * fit.hexSize) return;
     const board = { centerX: +fit.centerX.toFixed(1), centerY: +fit.centerY.toFixed(1), hexSize: +fit.hexSize.toFixed(2), rotation: +fit.rotation.toFixed(2), fromHover: pairs.length };
     const first = !this.fitted;
@@ -172,42 +227,79 @@ module.exports = {
   },
 
   /**
-   * Clicks a board spot. During setup, colonist reports which spot is under
-   * the mouse: point first, and only click once it reports `expected`
-   * (searching nearby if needed; every report also refines the board fit).
+   * Clicks a board spot and makes sure it took.
+   *   expected  during setup: the spot index colonist must report under the
+   *             mouse before clicking (searching nearby if needed)
+   *   kind      'corner' | 'edge' | 'tile': how far a nudged retry may go
+   *   mode      board modes (actionState) the click needs; `button` re-enters it
+   * After a click, wait for the board to change; if it didn't, retry with small
+   * nudges that stay well inside the intended spot.
    */
-  async clickBoard(driver, pt, expected) {
+  async clickBoard(driver, pt, opts = {}) {
+    const { expected, kind = 'corner', mode, button } = opts;
     const page = driver.page;
-    if (expected === undefined || expected < 0) return driver.clickPoint(pt);
-    const at = async p => {
-      this.hover = null;
-      await page.mouse.move(p.x, p.y, { steps: 2 });
-      await sleep(90);
-      return this.hover && this.hover.index === expected;
-    };
-    const target = async () => (await this.transform()).toScreen(this.lastTarget);
-    if (await at(pt)) return driver.clickPoint(pt);
-    // Search outwards; if the fit improves meanwhile, jump to the new estimate.
-    const size = this.cal.board.hexSize;
-    let center = pt;
-    for (let ring = 1; ring <= 6; ring++) {
-      for (let k = 0; k < 8; k++) {
-        const a = (Math.PI / 4) * k + ring * 0.4;
-        const p = { x: center.x + Math.cos(a) * ring * size * 0.07, y: center.y + Math.sin(a) * ring * size * 0.07 };
-        if (await at(p)) return driver.clickPoint(p);
-      }
-      if (this.lastTarget) {
-        const p = await target();
-        if (Math.hypot(p.x - center.x, p.y - center.y) > 2) {
-          center = p;
-          if (await at(p)) return driver.clickPoint(p);
+    if (expected !== undefined && expected >= 0) {
+      const at = async p => {
+        this.hover = null;
+        await page.mouse.move(p.x, p.y, { steps: 2 });
+        await sleep(90);
+        return this.hover && this.hover.index === expected;
+      };
+      let found = await at(pt) ? pt : null;
+      // Search outwards; if the fit improves meanwhile, jump to the new estimate.
+      const size = this.cal.board.hexSize;
+      let center = pt;
+      for (let ring = 1; !found && ring <= 6; ring++) {
+        for (let k = 0; !found && k < 8; k++) {
+          const a = (Math.PI / 4) * k + ring * 0.4;
+          const p = { x: center.x + Math.cos(a) * ring * size * 0.07, y: center.y + Math.sin(a) * ring * size * 0.07 };
+          if (await at(p)) found = p;
+        }
+        if (!found && this.lastTarget) {
+          const p = (await this.transform()).toScreen(this.lastTarget);
+          if (Math.hypot(p.x - center.x, p.y - center.y) > 2) { center = p; if (await at(p)) found = p; }
         }
       }
+      // colonist never reported any spot this session: it may not send hover
+      // reports any more, so click the best estimate rather than nothing.
+      if (!found && this.hoverSeen) throw new Error("colonist didn't confirm the spot under the mouse");
+      pt = found || pt;
     }
-    // colonist never reported any spot this session: it may not send hover
-    // reports any more, so click the best estimate rather than nothing.
-    if (!this.hoverSeen) return driver.clickPoint(pt);
-    throw new Error("colonist didn't confirm the spot under the mouse");
+    const size = this.cal.board.hexSize;
+    const r = NUDGE[kind] * size;
+    const tries = [pt];
+    for (const f of [0.5, 1]) for (let k = 0; k < 8; k++) tries.push({ x: pt.x + Math.cos((Math.PI / 4) * k) * r * f, y: pt.y + Math.sin((Math.PI / 4) * k) * r * f });
+    for (const p of tries) {
+      const as = (this.game.state.currentState || {}).actionState;
+      if (mode && !mode.includes(as)) {
+        if (!button) break; // the mode ended without us (e.g. the turn moved on)
+        await driver.clickSelector(button);
+        await this.waitFor(() => mode.includes((this.game.state.currentState || {}).actionState), 800);
+      }
+      const before = this.game.boardKey();
+      await driver.clickPoint(p);
+      if (await this.waitFor(() => this.game.boardKey() !== before, 900)) return;
+    }
+    throw new Error('the click on the board did not register');
+  },
+
+  /** Polls `cond` for up to `ms` milliseconds. */
+  async waitFor(cond, ms) {
+    for (let t = 0; t < ms; t += 50) { if (cond()) return true; await sleep(50); }
+    return cond();
+  },
+
+  /** When a move is handed to the player, keep a snapshot of the page for improving the profile. */
+  async onHandover(page, move) {
+    if (!this.sessionDir || this.persist === false) return;
+    const n = (this.handovers = (this.handovers || 0) + 1);
+    const base = path.join(this.sessionDir, `handover-${String(n).padStart(2, '0')}-${move.kind}`);
+    try {
+      const html = await page.content();
+      fs.writeFileSync(base + '.html.gz', zlib.gzipSync(html));
+      await page.screenshot({ path: base + '.jpg', type: 'jpeg', quality: 60 });
+      fs.writeFileSync(base + '.json', JSON.stringify({ move, actionState: (this.game.state.currentState || {}).actionState, highlights: this.game.highlights }, null, 1));
+    } catch (e) { /* page busy */ }
   },
 
   /** Waits (up to 20 s) for the board's position, asking the player to hover glowing spots. */
@@ -218,11 +310,18 @@ module.exports = {
     if (!this.cal) throw new Error("the board's position isn't known yet");
   },
 
-  async pickCards(driver, cards) {
+  async pickCards(driver, cards, fromHand) {
     for (const [r, n] of Object.entries(cards)) {
-      for (let k = 0; k < n; k++) await driver.clickSelector(SEL.pickCard(RES_CODE[r]));
+      for (let k = 0; k < n; k++) {
+        if (fromHand) {
+          // Discards: cards may be picked from a picker or straight from my hand.
+          const picker = driver.page.locator(SEL.pickCard(RES_CODE[r])).first();
+          if (await picker.isVisible().catch(() => false)) await driver.clickSelector(SEL.pickCard(RES_CODE[r]));
+          else await driver.clickSelector(SEL.handCard(RES_CODE[r]));
+        } else await driver.clickSelector(SEL.pickCard(RES_CODE[r]));
+      }
     }
-    await driver.clickSelector(SEL.confirm);
+    await driver.clickSelector(fromHand ? SEL.anyConfirm : SEL.confirm);
   },
 
   async performMove(move, driver) {
@@ -233,13 +332,14 @@ module.exports = {
     const vertex = () => t.toScreen((this.lastTarget = geometry.vertex(move.vertex)));
     const edge = () => t.toScreen((this.lastTarget = geometry.edge(move.edge)));
     switch (move.kind) {
-      case 'placeSettlement': return this.clickBoard(driver, vertex(), g.cornerIndex(move.vertex));
-      case 'placeRoad': return this.clickBoard(driver, edge(), g.edgeIndex(move.edge));
-      case 'placeFreeRoad': return this.clickBoard(driver, edge());
-      case 'moveRobber': return this.clickBoard(driver, t.toScreen(geometry.hex(move.hex)));
-      case 'buildSettlement': await driver.clickSelector(SEL.settlement); return this.clickBoard(driver, vertex());
-      case 'buildCity': await driver.clickSelector(SEL.city); return this.clickBoard(driver, vertex());
-      case 'buildRoad': await driver.clickSelector(SEL.road); return this.clickBoard(driver, edge());
+      case 'placeSettlement': return this.clickBoard(driver, vertex(), { expected: g.cornerIndex(move.vertex), kind: 'corner' });
+      case 'placeRoad': return this.clickBoard(driver, edge(), { expected: g.edgeIndex(move.edge), kind: 'edge' });
+      case 'placeFreeRoad': return this.clickBoard(driver, edge(), { kind: 'edge', mode: MODE.placeFreeRoad });
+      case 'moveRobber': return this.clickBoard(driver, t.toScreen((this.lastTarget = geometry.hex(move.hex))), { kind: 'tile', mode: MODE.moveRobber });
+      case 'buildSettlement': await driver.clickSelector(SEL.settlement); return this.clickBoard(driver, vertex(), { kind: 'corner', mode: MODE.buildSettlement, button: SEL.settlement });
+      case 'buildCity': await driver.clickSelector(SEL.city); return this.clickBoard(driver, vertex(), { kind: 'corner', mode: MODE.buildCity, button: SEL.city });
+      case 'buildRoad': await driver.clickSelector(SEL.road); return this.clickBoard(driver, edge(), { kind: 'edge', mode: MODE.buildRoad, button: SEL.road });
+      case 'steal': return driver.clickSelector(SEL.victim(g.playOrder[move.victim]), { timeout: 1500 });
       case 'roll': return driver.clickSelector(SEL.roll);
       case 'endTurn': return driver.clickSelector(SEL.endTurn);
       case 'buyDevCard': return driver.clickSelector(SEL.buyDev);
@@ -256,7 +356,7 @@ module.exports = {
         await driver.clickSelector(SEL.handCard(DEV_CODE.playMonopoly));
         return this.pickCards(driver, { [move.resource]: 1 });
       case 'discard':
-        return this.pickCards(driver, move.cards);
+        return this.pickCards(driver, move.cards, true);
       default:
         throw new Error(`the colonist profile can't do "${move.kind}" yet`);
     }

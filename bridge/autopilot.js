@@ -92,7 +92,7 @@ async function run(opts) {
     const snap = await profile.readSnapshot(page);
     if (!snap) { await sleep(300); continue; }
     if (snap.phase === 'gameOver') {
-      log(`Game over. ${snap.winner === snap.me ? 'We won!' : 'We did not win.'}`);
+      log(`Game over. ${snap.winner === undefined ? '' : snap.winner === snap.me ? 'We won!' : 'We did not win.'}`);
       break;
     }
     if (auto && profile.handlePrompt && await profile.handlePrompt(page, snap, new Driver(page, () => profile.transform(page)))) continue;
@@ -118,7 +118,8 @@ async function run(opts) {
       await profile.performMove(move, driver);
     } catch (e) {
       // Hand the move over rather than getting stuck: tell the player what to do.
-      log(`  I can't click this one (${e.message}).\n  Please do it yourself: ${describe(move)}`);
+      log(`  I can't click this one (${e.message.split('\n')[0]}).\n  Please do it yourself: ${describe(move)}`);
+      if (profile.onHandover) await profile.onHandover(page, move);
       waitingOnYou = key;
       continue;
     }
@@ -136,6 +137,7 @@ async function run(opts) {
       stats.retries++;
       if (++stuck >= 3) {
         log(`  That didn't work three times. Please do it yourself: ${describe(move)}`);
+        if (profile.onHandover) await profile.onHandover(page, move);
         waitingOnYou = key;
         stuck = 0;
       }
