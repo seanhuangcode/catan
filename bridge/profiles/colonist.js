@@ -84,8 +84,13 @@ module.exports = {
       });
     };
     page.on('websocket', watch);
-    console.log('Waiting for a colonist game. Reload the colonist tab (Cmd+R) or start a game now,\n' +
-      'so the autopilot can see the game connection.');
+    // colonist's connection opens when the page loads, so it has to load again
+    // now that we're listening. colonist reconnects to a running game by itself.
+    if (/colonist\.io/.test(page.url())) {
+      console.log('Reloading the colonist tab so the autopilot can follow the game…');
+      await page.reload().catch(() => {});
+    }
+    console.log('Waiting for a game against bots to start (or continue).');
     if (!this.cal) console.log('No board calibration yet: run `npm run calibrate-colonist` first to let it click the board.');
   },
 

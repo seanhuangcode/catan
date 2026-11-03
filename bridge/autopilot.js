@@ -60,7 +60,13 @@ async function run(opts) {
   let page = opts.page;
   if (!page && opts.connect) {
     // Attach to a Chrome the user started with remote debugging, and use its tab.
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.port || 9222}`);
+    // Chrome may still be starting: keep trying for a while.
+    for (let i = 0; ; i++) {
+      try { browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.port || 9222}`); break; } catch (e) {
+        if (i >= 30) throw new Error(`Could not reach Chrome on port ${opts.port || 9222}. Start it with: npm run open-chrome`);
+        await sleep(1000);
+      }
+    }
     const pages = browser.contexts()[0].pages();
     page = pages.find(p => p.url().includes(new URL(profile.defaultUrl).hostname)) || pages[0];
     log(`Attached to your Chrome tab: ${page.url()}`);
@@ -89,7 +95,7 @@ async function run(opts) {
       log(`Game over. ${snap.winner === snap.me ? 'We won!' : 'We did not win.'}`);
       break;
     }
-    if (auto && profile.handlePrompt && await profile.handlePrompt(page, snap, new Driver(page, await profile.transform(page)))) continue;
+    if (auto && profile.handlePrompt && await profile.handlePrompt(page, snap, new Driver(page, () => profile.transform(page)))) continue;
     if (snap.busy || !C.Bridge.needsDecision(snap)) { await sleep(150); continue; }
 
     const key = stateKey(snap);
@@ -98,7 +104,7 @@ async function run(opts) {
     if (!auto) {
       if (key !== lastAdvice) {
         log(`Suggested move: ${describe(move)}`);
-        await new Driver(page, await profile.transform(page)).showAdvice(move, describe(move)).catch(() => {});
+        await new Driver(page, () => profile.transform(page)).showAdvice(move, describe(move)).catch(() => {});
         lastAdvice = key;
       }
       await sleep(500);
@@ -106,7 +112,7 @@ async function run(opts) {
     }
 
     log(`turn ${snap.turn} ${snap.phase}: ${describe(move)}`);
-    const driver = new Driver(page, await profile.transform(page), { pause: opts.pause });
+    const driver = new Driver(page, () => profile.transform(page), { pause: opts.pause });
     if (profile.reset && !snap.prompt) await profile.reset(page);
     try {
       await profile.performMove(move, driver);

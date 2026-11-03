@@ -41,6 +41,9 @@ module.exports = {
   async transform(page) {
     const t = await page.evaluate(() => {
       const svg = document.getElementById('board');
+      // Small windows scroll: bring the board on screen before measuring it.
+      const box = svg.getBoundingClientRect();
+      if (box.top < 0 || box.bottom > window.innerHeight) svg.scrollIntoView({ block: 'center' });
       const r = svg.getBoundingClientRect();
       const vb = svg.viewBox.baseVal;
       const scale = Math.min(r.width / vb.width, r.height / vb.height);

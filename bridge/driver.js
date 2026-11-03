@@ -30,7 +30,8 @@ const sleep = ms => new Promise(res => setTimeout(res, ms));
 class Driver {
   /**
    * @param {import('playwright').Page} page
-   * @param {{toScreen: function({x,y}): {x,y}}} transform  board units -> page pixels
+   * @param {{toScreen: function({x,y}): {x,y}} | function(): Promise} transform  board units -> page pixels,
+   *        or a function returning it (recomputed before each board click)
    * @param {object} [opts]
    * @param {number} [opts.pause=120]  ms to wait after each click so the page can react
    */
@@ -47,14 +48,21 @@ class Driver {
     await sleep(this.pause);
   }
 
-  clickVertex(ref) { return this.clickPoint(this.transform.toScreen(geometry.vertex(ref))); }
-  clickEdge(ref) { return this.clickPoint(this.transform.toScreen(geometry.edge(ref))); }
-  clickHex(ref) { return this.clickPoint(this.transform.toScreen(geometry.hex(ref))); }
+  /** The board transform, recomputed now if a function was given (the page may have scrolled). */
+  async board() {
+    return typeof this.transform === 'function' ? this.transform() : this.transform;
+  }
+
+  async clickVertex(ref) { return this.clickPoint((await this.board()).toScreen(geometry.vertex(ref))); }
+  async clickEdge(ref) { return this.clickPoint((await this.board()).toScreen(geometry.edge(ref))); }
+  async clickHex(ref) { return this.clickPoint((await this.board()).toScreen(geometry.hex(ref))); }
 
   /** Clicks the center of the first visible element matching `selector`. */
   async clickSelector(selector, opts = {}) {
     const el = this.page.locator(selector).first();
     await el.waitFor({ state: 'visible', timeout: opts.timeout || 3000 });
+    // A small window may have the element scrolled out of view; mouse clicks need it on screen.
+    await el.scrollIntoViewIfNeeded().catch(() => {});
     const box = await el.boundingBox();
     if (!box) throw new Error('Element has no box: ' + selector);
     await this.clickPoint({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
@@ -67,9 +75,10 @@ class Driver {
   /** Advice mode: draws a marker on the page at the move's board location, with a label. */
   async showAdvice(move, label) {
     let pt = null;
-    if (move.vertex) pt = this.transform.toScreen(geometry.vertex(move.vertex));
-    else if (move.edge) pt = this.transform.toScreen(geometry.edge(move.edge));
-    else if (move.hex) pt = this.transform.toScreen(geometry.hex(move.hex));
+    const t = await this.board();
+    if (move.vertex) pt = t.toScreen(geometry.vertex(move.vertex));
+    else if (move.edge) pt = t.toScreen(geometry.edge(move.edge));
+    else if (move.hex) pt = t.toScreen(geometry.hex(move.hex));
     await this.page.evaluate(({ pt, label }) => {
       let box = document.getElementById('catan-advice');
       if (!box) {

@@ -97,7 +97,13 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
 (async () => {
   const profile = Object.create(require('../bridge/profiles/colonist.js'));
   let onSocket = null;
-  const fakePage = { on: (ev, fn) => { if (ev === 'websocket') onSocket = fn; }, mouse: { move: async () => {} } };
+  let reloaded = false;
+  const fakePage = {
+    on: (ev, fn) => { if (ev === 'websocket') onSocket = fn; },
+    mouse: { move: async () => {} },
+    url: () => 'https://colonist.io/#268598698',
+    reload: async () => { reloaded = true; },
+  };
   const log = console.log;
   console.log = () => {};
   await profile.prepare(fakePage);
@@ -107,6 +113,7 @@ check('reads the finished game', fin.phase === 'gameOver' && fin.buildings.lengt
   for (const l of lines) {
     if (!l.raw && l.dir === 'received') handlers.framereceived({ payload: JSON.stringify(l.msg) });
   }
+  check('reloads the colonist tab so it sees the game connection open', reloaded);
   const live = await profile.readSnapshot();
   check('the live listener reads the same game', live && live.phase === 'gameOver' && live.buildings.length === 15);
 

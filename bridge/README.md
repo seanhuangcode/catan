@@ -51,14 +51,12 @@ This found and fixed one real rule difference: colonist's friendly robber also p
 
 ### Playing a game with it
 
-Use colonist.io's **computer opponents** (or friends who agree). On a Mac:
+Use colonist.io's **computer opponents** (or friends who agree). On a Mac, in this folder:
 ```bash
-npm run open-chrome            # Chrome on colonist.io, ready for the autopilot
-npm run calibrate-colonist     # once: start a game, click the middle tile, then its right neighbor
-npm run autopilot-colonist     # advice only: shows the suggested move on the board
-npm run autopilot-colonist -- --auto   # clicks the moves itself
+npm run play-colonist               # plays your seat, clicking the moves itself
+npm run play-colonist -- --advise   # only shows the suggested move on the board
 ```
-Reload the colonist tab after the autopilot starts, so it sees the game connection open. Don't resize the window after calibrating.
+It opens Chrome on colonist.io (a separate Chrome profile in `~/colonist-chrome`), asks you to measure the board the first time (start a game, click the middle tile, then its right neighbor), reloads the tab so it can follow the game, and plays. Don't resize the window after measuring; delete `bridge/profiles/colonist.calibration.json` to measure again.
 
 ### Message codes (from the recorded game)
 
