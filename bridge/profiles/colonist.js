@@ -136,6 +136,8 @@ module.exports = {
       }
     }).catch(() => {});
     const track = () => {
+      if (window.__catanTracking) return; // the init script and the direct call both run
+      window.__catanTracking = true;
       window.addEventListener('mousemove', e => window.__catanMouse({ x: e.clientX, y: e.clientY }), true);
       window.addEventListener('mousedown', e => window.__catanMouse({ x: e.clientX, y: e.clientY, down: true }), true);
     };
