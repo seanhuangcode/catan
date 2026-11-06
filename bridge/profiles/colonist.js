@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const { ColonistGame, colonistCorner, colonistEdgeEnds } = require('../colonist-state.js');
 const { fitSimilarity } = require('../fit.js');
+const { decodePNG, locateBoard } = require('../vision.js');
 const { decode } = require('../msgpack.js');
 const { geometry, sleep } = require('../driver.js');
 
@@ -91,6 +92,7 @@ module.exports = {
     this.mouse = null;
     this.samples = new Map(); // "corner:12" -> {board: {x, y}, points: [{x, y}]}
     this.fitted = false;
+    this.vision = false;
     this.lastDown = null;
     this.page = page;
     // Every piece of mine that lands where a click just happened pins that spot on screen.
@@ -150,7 +152,6 @@ module.exports = {
     }
     await page.evaluate(track).catch(() => {});
     console.log('Waiting for a game against bots to start (or continue).');
-    if (!this.cal) console.log('Board position not known yet: during setup, move your mouse over a few glowing spots.');
   },
 
   /**
@@ -224,6 +225,7 @@ module.exports = {
 
   /** Fits the board position from the hover samples once they span a few spots. */
   refit() {
+    if (this.vision) return; // the screenshot gives the exact position; old samples may be from before the board moved
     const pairs = [...this.samples.values()].map(e => ({
       board: e.board,
       screen: { x: e.points.reduce((a, p) => a + p.x, 0) / e.points.length, y: e.points.reduce((a, p) => a + p.y, 0) / e.points.length },
@@ -300,7 +302,7 @@ module.exports = {
     const { expected, kind = 'corner', mode, button } = opts;
     const page = driver.page;
     if (expected !== undefined && expected >= 0) {
-      await this.warmUp(page);
+      if (!this.vision) await this.warmUp(page);
       const t = await this.transform();
       const aim = this.lastTarget ? t.toScreen(this.lastTarget) : pt;
       let dir = null;
@@ -310,17 +312,26 @@ module.exports = {
         const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
         dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
       }
-      let found = await this.search(page, aim, idx => idx === expected, kind, Date.now() + 12000, dir);
+      let found = await this.search(page, aim, idx => idx === expected, kind, Date.now() + (this.vision ? 2500 : 12000), dir);
       // colonist never reported any spot this session: it may not send hover
       // reports any more, so click the best estimate rather than nothing.
-      if (!found && this.hoverSeen) throw new Error("colonist didn't confirm the spot under the mouse");
+      if (!found && this.hoverSeen && !this.vision) throw new Error("colonist didn't confirm the spot under the mouse");
       pt = found || aim;
     }
     const size = this.cal.board.hexSize;
     const r = NUDGE[kind] * size;
     const tries = [pt];
     for (const f of [0.5, 1]) for (let k = 0; k < 8; k++) tries.push({ x: pt.x + Math.cos((Math.PI / 4) * k) * r * f, y: pt.y + Math.sin((Math.PI / 4) * k) * r * f });
-    for (const p of tries) {
+    for (let i = 0; i < tries.length; i++) {
+      if (i === 1 && this.vision && this.lastTarget) {
+        // Missed: the board may have just moved. Look again and follow it.
+        const was = (await this.transform()).toScreen(this.lastTarget);
+        if (await this.locate(page)) {
+          const now = (await this.transform()).toScreen(this.lastTarget);
+          for (const q of tries) { q.x += now.x - was.x; q.y += now.y - was.y; }
+        }
+      }
+      const p = tries[i];
       const as = (this.game.state.currentState || {}).actionState;
       if (mode && !mode.includes(as)) {
         if (!button) break; // the mode ended without us (e.g. the turn moved on)
@@ -424,6 +435,35 @@ module.exports = {
     } catch (e) { /* page busy */ }
   },
 
+  /**
+   * Finds the board in a screenshot of the page (bridge/vision.js). colonist
+   * lets the board be dragged and moves it when panels open, so this runs
+   * before every board move rather than trusting a remembered position.
+   * Returns true when the board was found.
+   */
+  async locate(page) {
+    const ms = this.game.state && this.game.state.mapState;
+    if (!ms || !ms.tileHexStates) return false;
+    let image;
+    try { image = decodePNG(await page.screenshot({ type: 'png', scale: 'css' })); } catch (e) { return false; }
+    const tiles = Object.keys(ms.tileHexStates).map(i => ({ ...this.game.boardPos('tile', Number(i)), desert: ms.tileHexStates[i].type === 0 }));
+    const fit = locateBoard(image, tiles);
+    this.note({ vision: fit });
+    if (!fit || fit.error > 0.15) {
+      if (this.vision) console.log("  couldn't find the board in a screenshot this time; using its last known position");
+      return false;
+    }
+    const prev = this.cal && this.cal.board;
+    const board = { centerX: +fit.centerX.toFixed(1), centerY: +fit.centerY.toFixed(1), hexSize: +fit.hexSize.toFixed(2), rotation: +fit.rotation.toFixed(2), fromScreenshot: fit.matched };
+    if (!this.vision) console.log(`  found the board on screen (${fit.matched} number tokens)`);
+    else if (prev && Math.hypot(prev.centerX - board.centerX, prev.centerY - board.centerY) > 3) console.log('  the board moved on screen; following it');
+    this.cal = { board };
+    this.offset = { x: 0, y: 0 };
+    this.fitted = true;
+    this.vision = true;
+    return true;
+  },
+
   /** Waits (up to 20 s) for the board's position, asking the player to hover glowing spots. */
   async ensureBoard() {
     if (this.cal) return;
@@ -449,7 +489,10 @@ module.exports = {
   async performMove(move, driver) {
     const BOARD = ['placeSettlement', 'placeRoad', 'placeFreeRoad', 'moveRobber', 'buildSettlement', 'buildCity', 'buildRoad'];
     this.note({ move, actionState: this.actionState(), highlights: this.game.highlights });
-    if (BOARD.includes(move.kind)) await this.ensureBoard();
+    if (BOARD.includes(move.kind)) {
+      await this.locate(driver.page);
+      await this.ensureBoard();
+    }
     const t = await this.transform();
     const g = this.game;
     const vertex = () => t.toScreen((this.lastTarget = geometry.vertex(move.vertex)));

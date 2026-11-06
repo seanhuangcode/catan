@@ -46,7 +46,7 @@ This found and fixed one real rule difference: colonist's friendly robber also p
 - Buttons are clicked by id (`#roll-dice-button`, `#action-button-build-city`, …) or icon.
 - Cards are clicked by their card code (`[data-card-enum]`).
 - Card pickers (Year of Plenty, Monopoly, discards) use the confirm button.
-- The board is a canvas, so it's clicked by position from the calibration. During setup colonist reports which spot is under the mouse; the autopilot checks that before clicking and fine-tunes the calibration from it.
+- The board is a canvas, so it's clicked by position. Before every board move the autopilot finds the board in a screenshot (see below).
 - Trades aren't automated yet. The network never picks trades on colonist. When a move can't be clicked, the autopilot tells you what to do and waits for you.
 
 ### Playing a game with it
@@ -58,7 +58,7 @@ npm run play-colonist -- --advise   # only shows the suggested move on the board
 ```
 It opens Chrome on colonist.io (a separate Chrome profile in `~/colonist-chrome`), reloads the tab so it can follow the game, and plays.
 
-**Where the board is.** The board is drawn on a canvas, so clicks go by position. During setup, colonist reports which glowing spot is under the mouse; pairing those reports with the mouse position gives the board's exact position, size and rotation (`bridge/fit.js`). The first time, move your mouse over a few glowing spots when your first settlement is due; it says "learned the board's position" and saves it. Setup clicks are also checked against those reports before clicking, so a slightly stale position self-corrects. If you resize or zoom the window, delete `bridge/profiles/colonist.calibration.json` and hover a few spots again.
+**Where the board is.** The board is drawn on a canvas, and colonist lets it be dragged and moves it when panels open, so a remembered position goes stale. Before every board move the autopilot takes a screenshot and finds the pale number tokens (`bridge/vision.js`). The game state says which tile each token belongs to, so matching them gives the board's exact position, size and rotation, typically to within a pixel, in about 30 ms, even with the board partly off screen. If a board click doesn't register, it looks again in case the board just moved. Hover reports during setup and learning from placed pieces (below) remain as a fallback when no board can be found in the screenshot.
 
 **Learning as it plays.** Every piece of yours that appears where a click just happened (the autopilot's or yours) pins that spot's exact screen position and refines the board fit, including in the main game, where there are no hover reports. A main-game click that doesn't register is retried with small nudges that stay well inside the intended spot, re-pressing the build button if colonist left build mode.
 
